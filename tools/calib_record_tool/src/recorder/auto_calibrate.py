@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+import av
 import numpy as np
 import pandas as pd
 
@@ -27,13 +28,13 @@ from caliscope.core.charuco import Charuco
 from caliscope.core.point_data import ImagePoints
 from caliscope.core.point_data_bundle import PointDataBundle
 from caliscope.core.bootstrap_pose.build_paired_pose_network import build_paired_pose_network
-from caliscope.core.process_synchronized_recording import process_synchronized_recording
 from caliscope.persistence import (
   save_camera_array,
   save_charuco,
   save_image_points_csv,
 )
 from caliscope.recording.frame_source import FrameSource
+from caliscope.recording.frame_sync import compute_sync_indices
 from caliscope.repositories.point_data_bundle_repository import PointDataBundleRepository
 from caliscope.trackers.charuco_tracker import CharucoTracker
 
@@ -115,29 +116,50 @@ def _collect_charuco_points_from_video(
 ) -> list[tuple[int, object]]:
   """Iterate video frames and collect charuco corner detections.
 
+  Uses sequential decoding (single pass) instead of per-frame seeking
+  for ~10x speedup on H.264 video.
+
   Returns list of (frame_index, PointPacket) tuples.
   """
-  source = FrameSource(video_dir, port)
+  video_path = video_dir / f"port_{port}.mp4"
+  if not video_path.exists():
+    raise FileNotFoundError(f"Video file not found: {video_path}")
+
+  container = av.open(str(video_path))
+  stream = container.streams.video[0]
+  time_base = float(stream.time_base)
+  fps = float(stream.average_rate)
+  total_frames = stream.frames
+  if total_frames == 0 and container.duration is not None:
+    total_frames = int(container.duration / 1_000_000 * fps)
+
   collected = []
-  total_frames = source.frame_count
+  sampled = 0
 
   try:
-    for frame_idx in range(0, total_frames, subsample):
-      frame = source.get_frame(frame_idx)
-      if frame is None:
+    for frame in container.decode(stream):
+      if frame.pts is None:
+        continue
+      frame_idx = round(frame.pts * time_base * fps)
+
+      # Only process every Nth frame
+      if frame_idx % subsample != 0:
         continue
 
-      points = tracker.get_points(frame, port, 0)
+      img = frame.to_ndarray(format="bgr24")
+      points = tracker.get_points(img, port, 0)
+      sampled += 1
+
       if points is not None and len(points.point_id) > 0:
         collected.append((frame_idx, points))
 
-      if on_progress and frame_idx % (subsample * 20) == 0:
-        pct = int(frame_idx / total_frames * 100)
+      if on_progress and sampled % 20 == 0:
+        pct = int(frame_idx / max(total_frames, 1) * 100)
         _emit(on_progress, "intrinsic", f"Port {port}: scanning frame {frame_idx}/{total_frames}", pct)
   finally:
-    source.close()
+    container.close()
 
-  logger.info(f"Port {port}: collected {len(collected)} frames with charuco detections out of {total_frames // subsample} sampled")
+  logger.info(f"Port {port}: collected {len(collected)} frames with charuco detections out of {sampled} sampled")
   return collected
 
 
@@ -181,6 +203,126 @@ def _build_image_points_from_packets(
 
   df = pd.DataFrame(rows)
   return ImagePoints(df)
+
+
+def _process_extrinsic_sequential(
+  recording_dir: Path,
+  cameras: dict[int, CameraData],
+  tracker: CharucoTracker,
+  subsample: int = 3,
+  on_progress: Optional[ProgressCallback] = None,
+) -> ImagePoints:
+  """Optimized extrinsic 2D extraction using sequential video decoding.
+
+  Replaces process_synchronized_recording() for major speedup by
+  avoiding per-frame H.264 seeking. Decodes each video once sequentially.
+  """
+  # Load sync map
+  timestamps_csv = recording_dir / "frame_timestamps.csv"
+  sync_map = compute_sync_indices(timestamps_csv)
+
+  # Load frame times
+  timestamps_df = pd.read_csv(timestamps_csv)
+  frame_times: dict[tuple[int, int], float] = {}
+  for port_key, group in timestamps_df.groupby("port"):
+    sorted_group = group.sort_values("frame_time").reset_index(drop=True)
+    for frame_index, row in sorted_group.iterrows():
+      frame_times[(int(port_key), int(frame_index))] = float(row["frame_time"])
+
+  # Determine which sync indices to process
+  all_sync_indices = sorted(sync_map.keys())
+  sync_indices_to_process = all_sync_indices[::subsample]
+  total = len(sync_indices_to_process)
+
+  logger.info(f"Sequential extrinsic: {total} sync indices (subsample={subsample}, total={len(all_sync_indices)})")
+
+  # Pre-compute needed frame indices per port
+  port_needed: dict[int, set[int]] = {port: set() for port in cameras}
+  for sync_index in sync_indices_to_process:
+    for port, frame_index in sync_map[sync_index].items():
+      if frame_index is not None and port in cameras:
+        port_needed[port].add(frame_index)
+
+  # Sequential decode per port — the core optimization
+  port_results: dict[tuple[int, int], object] = {}  # (port, frame_idx) -> PointPacket
+
+  for port in cameras:
+    needed_set = port_needed.get(port, set())
+    if not needed_set:
+      continue
+
+    video_path = recording_dir / f"port_{port}.mp4"
+    if not video_path.exists():
+      logger.warning(f"Video not found: {video_path}")
+      continue
+
+    container = av.open(str(video_path))
+    stream = container.streams.video[0]
+    time_base = float(stream.time_base)
+    fps = float(stream.average_rate)
+    rotation = cameras[port].rotation_count
+
+    tracked = 0
+    for frame in container.decode(stream):
+      if frame.pts is None:
+        continue
+      frame_idx = round(frame.pts * time_base * fps)
+
+      if frame_idx in needed_set:
+        img = frame.to_ndarray(format="bgr24")
+        points = tracker.get_points(img, port, rotation)
+        port_results[(port, frame_idx)] = points
+        tracked += 1
+        needed_set.discard(frame_idx)
+
+        if not needed_set:
+          break  # All needed frames for this port collected
+
+    container.close()
+    logger.info(f"Port {port}: tracked {tracked} frames for extrinsic (sequential)")
+
+  # Assemble results in sync index order
+  point_rows: list[dict] = []
+  for i, sync_index in enumerate(sync_indices_to_process):
+    for port, frame_index in sync_map[sync_index].items():
+      if frame_index is None or port not in cameras:
+        continue
+      points = port_results.get((port, frame_index))
+      if points is None or len(points.point_id) == 0:
+        continue
+
+      obj_loc_x, obj_loc_y, obj_loc_z = points.obj_loc_list
+      frame_time = frame_times.get((port, frame_index), 0.0)
+
+      for j in range(len(points.point_id)):
+        point_rows.append({
+          "sync_index": sync_index,
+          "port": port,
+          "frame_index": frame_index,
+          "frame_time": frame_time,
+          "point_id": int(points.point_id[j]),
+          "img_loc_x": float(points.img_loc[j, 0]),
+          "img_loc_y": float(points.img_loc[j, 1]),
+          "obj_loc_x": obj_loc_x[j],
+          "obj_loc_y": obj_loc_y[j],
+          "obj_loc_z": obj_loc_z[j],
+        })
+
+    if on_progress and (i + 1) % 50 == 0:
+      on_progress(i + 1, total)
+
+  if on_progress:
+    on_progress(total, total)
+
+  if not point_rows:
+    df = pd.DataFrame(columns=[
+      "sync_index", "port", "frame_index", "frame_time",
+      "point_id", "img_loc_x", "img_loc_y",
+      "obj_loc_x", "obj_loc_y", "obj_loc_z",
+    ])
+    return ImagePoints(df)
+
+  return ImagePoints(pd.DataFrame(point_rows))
 
 
 def _generate_frame_timestamps(
@@ -329,10 +471,10 @@ def run_auto_calibration(
     _emit(on_progress, "extrinsic_2d", "Generating synchronization timestamps...", 42)
     _generate_frame_timestamps(extrinsic_dir, config.ports)
 
-    # ── Step 5: 2D extraction from extrinsic videos ─────────────────
-    _emit(on_progress, "extrinsic_2d", "Extracting 2D charuco points from extrinsic videos...", 45)
+    # ── Step 5: 2D extraction from extrinsic videos (sequential) ────
+    _emit(on_progress, "extrinsic_2d", "Extracting 2D charuco points (sequential decode)...", 45)
 
-    image_points = process_synchronized_recording(
+    image_points = _process_extrinsic_sequential(
       recording_dir=extrinsic_dir,
       cameras=camera_array.cameras,
       tracker=tracker,
