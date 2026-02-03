@@ -1,0 +1,51 @@
+# ============ 大文件/数据 ============
+# 项目录像数据（每个用户本地产生）
+projects/*/caliscope_project/
+projects/*/recordings/
+projects/*/raw_output/
+projects/*/calibration/
+
+# 测试视频
+tools/calib_record_tool/_test/
+
+# FFmpeg 二进制（用户自行安装）
+tools/calib_record_tool/bin/
+
+# ============ caliscope 上游源码 ============
+# caliscope 是 PyPI 依赖，不需要把源码放进你的仓库
+projects/caliscope/caliscope_src/
+
+# ============ Python 通用 ============
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# ============ 视频/大文件 ============
+*.mp4
+*.avi
+*.mkv
+*.mov
+
+# ============ 环境 ============
+.venv/
+*.conda/
+.env
+
+# ============ 工具生成文件 ============
+.claude/
+.ctx-snap/
+nul
+
+# ============ IDE ============
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ============ 系统 ============
+Thumbs.db
+.DS_Store

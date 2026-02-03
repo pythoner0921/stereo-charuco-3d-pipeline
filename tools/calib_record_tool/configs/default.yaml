@@ -1,0 +1,38 @@
+camera:
+  device_name: "3D USB Camera"
+  backend: "dshow" 
+  video_size: "3200x1200"
+  fps: 60
+
+split:
+  full_w: 3200
+  full_h: 1200
+  xsplit: 1600
+
+recording:
+  min_seconds: 30
+  target_seconds: 120
+  default_seconds: 120
+
+output:
+  base_dir: "../../projects/caliscope/caliscope_project/recordings"
+  keep_avi: true
+
+ffmpeg:
+  executable: "bin/ffmpeg/ffmpeg.exe"
+
+charuco:
+  columns: 10
+  rows: 16
+  board_height_cm: 80.0
+  board_width_cm: 50.0
+  dictionary: "DICT_4X4_100"
+  aruco_scale: 0.7
+  square_size_cm: 5.0
+
+mp4:
+  preset: "veryfast"
+  crf: 18
+
+project:
+  project_dir: "../../projects/caliscope/caliscope_project"

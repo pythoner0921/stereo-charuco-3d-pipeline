@@ -1,0 +1,26 @@
+#!/usr/bin/env python
+"""
+Launch the Advanced Stereo Calibration Recording UI.
+
+Features over the basic UI:
+- Live video preview during recording (OpenCV VideoWriter, no camera release)
+- Target region overlay showing where to place the board
+- ArUco marker detection to verify board placement
+- Auto-advance when board is held in the target region
+- Manual 'Next Position' button as fallback
+
+Usage:
+    python scripts/run_calibration_ui_advanced.py
+    python scripts/run_calibration_ui_advanced.py --config configs/default.yaml
+"""
+import sys
+from pathlib import Path
+
+# Add src to path
+tool_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(tool_root / "src"))
+
+from recorder.calibration_ui_advanced import main
+
+if __name__ == "__main__":
+    main()

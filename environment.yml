@@ -1,0 +1,11 @@
+name: caliscope311
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - ffmpeg
+  - pip:
+    - -e ./projects/caliscope/caliscope_src
+    - -e ./tools/calib_record_tool

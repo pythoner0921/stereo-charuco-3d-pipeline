@@ -1,0 +1,60 @@
+# ================================
+# Stereo ChArUco 3D Pipeline
+# Project Bootstrap Script
+# ================================
+
+$ROOT = "stereo-charuco-3d-pipeline"
+
+Write-Host "Creating workspace: $ROOT"
+
+# ---------- Root ----------
+New-Item -ItemType Directory -Path $ROOT -Force | Out-Null
+Set-Location $ROOT
+
+# ---------- Top-level ----------
+New-Item -ItemType File -Path "README.md" -Force | Out-Null
+
+# ---------- tools / calib_record_tool ----------
+New-Item -ItemType Directory -Path "tools\calib_record_tool" -Force | Out-Null
+Set-Location "tools\calib_record_tool"
+
+New-Item -ItemType File -Path "README.md" -Force | Out-Null
+New-Item -ItemType File -Path ".gitignore" -Force | Out-Null
+New-Item -ItemType File -Path "requirements.txt" -Force | Out-Null
+
+# configs
+New-Item -ItemType Directory -Path "configs" -Force | Out-Null
+New-Item -ItemType File -Path "configs\default.yaml" -Force | Out-Null
+
+# scripts
+New-Item -ItemType Directory -Path "scripts" -Force | Out-Null
+New-Item -ItemType File -Path "scripts\probe_camera.py" -Force | Out-Null
+New-Item -ItemType File -Path "scripts\record_raw.py" -Force | Out-Null
+New-Item -ItemType File -Path "scripts\split_lr.py" -Force | Out-Null
+New-Item -ItemType File -Path "scripts\record_and_split.py" -Force | Out-Null
+
+# src
+New-Item -ItemType Directory -Path "src\recorder" -Force | Out-Null
+New-Item -ItemType File -Path "src\recorder\__init__.py" -Force | Out-Null
+New-Item -ItemType File -Path "src\recorder\camera.py" -Force | Out-Null
+New-Item -ItemType File -Path "src\recorder\ffmpeg.py" -Force | Out-Null
+New-Item -ItemType File -Path "src\recorder\ui.py" -Force | Out-Null
+
+Set-Location ..\..
+
+# ---------- projects / caliscope ----------
+New-Item -ItemType Directory -Path "projects\caliscope\caliscope_project" -Force | Out-Null
+
+# ---------- assets ----------
+New-Item -ItemType Directory -Path "assets\boards" -Force | Out-Null
+New-Item -ItemType Directory -Path "assets\docs" -Force | Out-Null
+
+New-Item -ItemType File -Path "assets\docs\recording_protocol.md" -Force | Out-Null
+New-Item -ItemType File -Path "assets\docs\notes.md" -Force | Out-Null
+
+# ---------- Done ----------
+Write-Host ""
+Write-Host "========================================"
+Write-Host " Project structure created successfully "
+Write-Host " Root folder: $ROOT"
+Write-Host "========================================"
