@@ -47,12 +47,12 @@ def main():
     print(f"  New: {context.is_new}")
     print(f"  Needs calibration: {context.needs_calibration}")
 
-    # Stage 2: Calibration UI (if needed)
+    # Stage 2: Advanced Calibration UI (if needed)
     if context.needs_calibration:
-        print("\nOpening Calibration Recording UI...")
-        from .calibration_ui import CalibrationUI
+        print("\nOpening Advanced Calibration Recording UI...")
+        from .calibration_ui_advanced import CalibrationUIAdvanced
 
-        calib_app = CalibrationUI(
+        calib_app = CalibrationUIAdvanced(
             config_path=config_path,
             project_dir=context.project_dir,
             on_complete=lambda: None,
@@ -73,19 +73,19 @@ def main():
 
 
 def calibrate_only():
-    """Calibration UI standalone."""
+    """Advanced Calibration UI standalone."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-    parser = argparse.ArgumentParser(description="Stereo Calibration UI")
+    parser = argparse.ArgumentParser(description="Stereo Calibration UI (Advanced)")
     parser.add_argument("--config", type=str, default=None)
     parser.add_argument("--project-dir", type=str, default=None)
     args = parser.parse_args()
 
     config_path = _resolve_config(args.config)
 
-    from .calibration_ui import CalibrationUI
+    from .calibration_ui_advanced import CalibrationUIAdvanced
 
-    app = CalibrationUI(
+    app = CalibrationUIAdvanced(
         config_path=config_path,
         project_dir=Path(args.project_dir) if args.project_dir else None,
     )

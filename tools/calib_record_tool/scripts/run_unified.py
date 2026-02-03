@@ -63,13 +63,13 @@ def main():
   print(f"  New: {context.is_new}")
   print(f"  Needs calibration: {context.needs_calibration}")
 
-  # ── Stage 2: Calibration UI (if needed) ───────────────────
+  # ── Stage 2: Advanced Calibration UI (if needed) ─────────
   if context.needs_calibration:
-    print("\nOpening Calibration Recording UI...")
+    print("\nOpening Advanced Calibration Recording UI...")
 
-    from recorder.calibration_ui import CalibrationUI
+    from recorder.calibration_ui_advanced import CalibrationUIAdvanced
 
-    calib_app = CalibrationUI(
+    calib_app = CalibrationUIAdvanced(
       config_path=config_path,
       project_dir=context.project_dir,
       on_complete=lambda: None,  # Signal handled via destroy()

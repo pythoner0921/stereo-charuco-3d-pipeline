@@ -489,13 +489,23 @@ class OverlayRenderer:
 
 class CalibrationUIAdvanced(tk.Tk):
 
-    def __init__(self, config_path: Optional[Path] = None):
+    def __init__(self, config_path: Optional[Path] = None,
+                 project_dir: Optional[Path] = None,
+                 on_complete: Optional[Callable[[], None]] = None):
         super().__init__()
-        self.title("Stereo Calibration - Advanced (Live Detection)")
-        self.geometry("1280x820")
-        self.configure(bg="#2b2b2b")
 
         self._load_config(config_path)
+
+        # Dynamic project directory (overrides config-derived path)
+        self._project_dir: Optional[Path] = Path(project_dir) if project_dir else None
+        self._on_complete = on_complete
+
+        if self._project_dir:
+            self.title(f"Stereo Calibration - Advanced - {self._project_dir.name}")
+        else:
+            self.title("Stereo Calibration - Advanced (Live Detection)")
+        self.geometry("1280x820")
+        self.configure(bg="#2b2b2b")
 
         # State
         self._state = "idle"  # idle | preview | recording | processing
@@ -740,14 +750,17 @@ class CalibrationUIAdvanced(tk.Tk):
 
         # Session dir under raw_output/
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        from .paths import tool_root as _tool_root; tool_root = _tool_root()
-        if self.config.output_base:
-            out_base = Path(self.config.output_base)
-            if not out_base.is_absolute():
-                out_base = tool_root / out_base
-            project_root = out_base.parent
+        if self._project_dir:
+            project_root = self._project_dir
         else:
-            project_root = tool_root
+            from .paths import tool_root as _tool_root; tool_root = _tool_root()
+            if self.config.output_base:
+                out_base = Path(self.config.output_base)
+                if not out_base.is_absolute():
+                    out_base = tool_root / out_base
+                project_root = out_base.parent
+            else:
+                project_root = tool_root
         raw_output_dir = project_root / "raw_output"
         self._session_dir = raw_output_dir / f"calib_session_{ts}"
         self._session_dir.mkdir(parents=True, exist_ok=True)
@@ -809,14 +822,17 @@ class CalibrationUIAdvanced(tk.Tk):
     # ── post-process ────────────────────────────────────────────────
     def _post_process(self):
         try:
-            from .paths import tool_root as _tool_root; tool_root = _tool_root()
-            if self.config.output_base:
-                out_base = Path(self.config.output_base)
-                if not out_base.is_absolute():
-                    out_base = tool_root / out_base
-                project_root = out_base.parent
+            if self._project_dir:
+                project_root = self._project_dir
             else:
-                project_root = tool_root
+                from .paths import tool_root as _tool_root; tool_root = _tool_root()
+                if self.config.output_base:
+                    out_base = Path(self.config.output_base)
+                    if not out_base.is_absolute():
+                        out_base = tool_root / out_base
+                    project_root = out_base.parent
+                else:
+                    project_root = tool_root
 
             # Output to both intrinsic and extrinsic
             intrinsic_dir = project_root / "calibration" / "intrinsic"
@@ -1003,9 +1019,11 @@ def main():
     import argparse
     ap = argparse.ArgumentParser(description="Advanced Stereo Calibration UI")
     ap.add_argument("--config", type=str, default=None)
+    ap.add_argument("--project-dir", type=str, default=None)
     args = ap.parse_args()
     path = Path(args.config) if args.config else None
-    app = CalibrationUIAdvanced(path)
+    proj = Path(args.project_dir) if args.project_dir else None
+    app = CalibrationUIAdvanced(path, project_dir=proj)
     app.mainloop()
 
 
