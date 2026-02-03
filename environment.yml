@@ -7,5 +7,5 @@ dependencies:
   - pip
   - ffmpeg
   - pip:
-    - -e ./projects/caliscope/caliscope_src
+    - git+https://github.com/mprib/caliscope.git
     - -e ./tools/calib_record_tool
