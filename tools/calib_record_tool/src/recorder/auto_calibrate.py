@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+from concurrent.futures import ThreadPoolExecutor
+
 import av
 import numpy as np
 import pandas as pd
@@ -65,7 +67,7 @@ class AutoCalibConfig:
   image_size: tuple[int, int] = (1600, 1200)
   # Processing parameters
   intrinsic_subsample: int = 10  # process every Nth frame for intrinsic
-  extrinsic_subsample: int = 3   # process every Nth sync index for extrinsic
+  extrinsic_subsample: int = 6   # process every Nth sync index for extrinsic
 
   @classmethod
   def from_yaml(cls, yaml_data: dict, project_dir: Path) -> "AutoCalibConfig":
@@ -205,6 +207,51 @@ def _build_image_points_from_packets(
   return ImagePoints(df)
 
 
+def _decode_and_track_port(
+  video_path: Path,
+  port: int,
+  needed_frames: set[int],
+  charuco,
+  rotation: int,
+) -> dict[int, object]:
+  """Decode one port's video sequentially and run charuco detection.
+
+  Each thread gets its own CharucoTracker instance to avoid shared state.
+  OpenCV and PyAV both release the GIL, so threads run in true parallelism.
+
+  Returns:
+    {frame_index: PointPacket} for all needed frames.
+  """
+  # Each thread gets its own tracker — CharucoTracker is lightweight
+  tracker = CharucoTracker(charuco)
+
+  results: dict[int, object] = {}
+  needed = set(needed_frames)  # local copy
+
+  container = av.open(str(video_path))
+  stream = container.streams.video[0]
+  time_base = float(stream.time_base)
+  fps = float(stream.average_rate)
+
+  for frame in container.decode(stream):
+    if frame.pts is None:
+      continue
+    frame_idx = round(frame.pts * time_base * fps)
+
+    if frame_idx in needed:
+      img = frame.to_ndarray(format="bgr24")
+      points = tracker.get_points(img, port, rotation)
+      results[frame_idx] = points
+      needed.discard(frame_idx)
+
+      if not needed:
+        break
+
+  container.close()
+  logger.info(f"Port {port}: tracked {len(results)} frames (parallel)")
+  return results
+
+
 def _process_extrinsic_sequential(
   recording_dir: Path,
   cameras: dict[int, CameraData],
@@ -212,10 +259,11 @@ def _process_extrinsic_sequential(
   subsample: int = 3,
   on_progress: Optional[ProgressCallback] = None,
 ) -> ImagePoints:
-  """Optimized extrinsic 2D extraction using sequential video decoding.
+  """Optimized extrinsic 2D extraction.
 
-  Replaces process_synchronized_recording() for major speedup by
-  avoiding per-frame H.264 seeking. Decodes each video once sequentially.
+  Two key optimizations over process_synchronized_recording():
+    1. Sequential decode (single pass) instead of per-frame H.264 seeking
+    2. All ports processed in parallel threads (OpenCV releases GIL)
   """
   # Load sync map
   timestamps_csv = recording_dir / "frame_timestamps.csv"
@@ -234,7 +282,7 @@ def _process_extrinsic_sequential(
   sync_indices_to_process = all_sync_indices[::subsample]
   total = len(sync_indices_to_process)
 
-  logger.info(f"Sequential extrinsic: {total} sync indices (subsample={subsample}, total={len(all_sync_indices)})")
+  logger.info(f"Parallel extrinsic: {total} sync indices (subsample={subsample}, total={len(all_sync_indices)})")
 
   # Pre-compute needed frame indices per port
   port_needed: dict[int, set[int]] = {port: set() for port in cameras}
@@ -243,43 +291,30 @@ def _process_extrinsic_sequential(
       if frame_index is not None and port in cameras:
         port_needed[port].add(frame_index)
 
-  # Sequential decode per port — the core optimization
-  port_results: dict[tuple[int, int], object] = {}  # (port, frame_idx) -> PointPacket
+  # ── Parallel decode + track per port ──────────────────────────
+  port_results: dict[tuple[int, int], object] = {}
 
-  for port in cameras:
-    needed_set = port_needed.get(port, set())
-    if not needed_set:
-      continue
-
-    video_path = recording_dir / f"port_{port}.mp4"
-    if not video_path.exists():
-      logger.warning(f"Video not found: {video_path}")
-      continue
-
-    container = av.open(str(video_path))
-    stream = container.streams.video[0]
-    time_base = float(stream.time_base)
-    fps = float(stream.average_rate)
-    rotation = cameras[port].rotation_count
-
-    tracked = 0
-    for frame in container.decode(stream):
-      if frame.pts is None:
+  with ThreadPoolExecutor(max_workers=len(cameras)) as pool:
+    futures = {}
+    for port in cameras:
+      needed = port_needed.get(port, set())
+      if not needed:
         continue
-      frame_idx = round(frame.pts * time_base * fps)
+      video_path = recording_dir / f"port_{port}.mp4"
+      if not video_path.exists():
+        logger.warning(f"Video not found: {video_path}")
+        continue
 
-      if frame_idx in needed_set:
-        img = frame.to_ndarray(format="bgr24")
-        points = tracker.get_points(img, port, rotation)
+      futures[port] = pool.submit(
+        _decode_and_track_port,
+        video_path, port, needed,
+        tracker.charuco,  # pass charuco config, thread creates own tracker
+        cameras[port].rotation_count,
+      )
+
+    for port, future in futures.items():
+      for frame_idx, points in future.result().items():
         port_results[(port, frame_idx)] = points
-        tracked += 1
-        needed_set.discard(frame_idx)
-
-        if not needed_set:
-          break  # All needed frames for this port collected
-
-    container.close()
-    logger.info(f"Port {port}: tracked {tracked} frames for extrinsic (sequential)")
 
   # Assemble results in sync index order
   point_rows: list[dict] = []
@@ -425,43 +460,73 @@ def run_auto_calibration(
       )
     camera_array = CameraArray(cameras)
 
-    # ── Step 3: Intrinsic calibration ───────────────────────────────
+    # ── Step 3: Intrinsic calibration (parallel collection) ────────
     total_ports = len(config.ports)
-    for idx, port in enumerate(config.ports):
-      _emit(on_progress, "intrinsic",
-            f"Calibrating camera {port} ({idx + 1}/{total_ports})...",
-            10 + idx * 15)
 
-      # Verify video exists
+    # Verify all videos exist first
+    for port in config.ports:
       video_path = intrinsic_dir / f"port_{port}.mp4"
       if not video_path.exists():
         raise FileNotFoundError(f"Intrinsic video not found: {video_path}")
 
-      # Collect charuco points from video
-      collected = _collect_charuco_points_from_video(
-        intrinsic_dir, port, tracker,
-        subsample=config.intrinsic_subsample,
-        on_progress=on_progress,
-      )
+    # Collect charuco points from ALL ports in parallel
+    _emit(on_progress, "intrinsic",
+          f"Scanning {total_ports} cameras in parallel...", 10)
 
+    def _collect_for_port(port):
+      """Thread worker: decode + detect charuco for one port."""
+      # Each thread gets its own tracker (lightweight, just references charuco)
+      t = CharucoTracker(charuco)
+      video_path = intrinsic_dir / f"port_{port}.mp4"
+      container = av.open(str(video_path))
+      stream = container.streams.video[0]
+      tb = float(stream.time_base)
+      fps_val = float(stream.average_rate)
+      collected = []
+      sampled = 0
+      try:
+        for frame in container.decode(stream):
+          if frame.pts is None:
+            continue
+          fidx = round(frame.pts * tb * fps_val)
+          if fidx % config.intrinsic_subsample != 0:
+            continue
+          img = frame.to_ndarray(format="bgr24")
+          pts = t.get_points(img, port, 0)
+          sampled += 1
+          if pts is not None and len(pts.point_id) > 0:
+            collected.append((fidx, pts))
+      finally:
+        container.close()
+      logger.info(f"Port {port}: collected {len(collected)} charuco frames out of {sampled} sampled")
+      return port, collected
+
+    with ThreadPoolExecutor(max_workers=total_ports) as pool:
+      futures = [pool.submit(_collect_for_port, p) for p in config.ports]
+      collected_by_port = {}
+      for f in futures:
+        port, collected = f.result()
+        collected_by_port[port] = collected
+
+    _emit(on_progress, "intrinsic", "Parallel scanning complete", 25)
+
+    # Run calibration for each port (fast — uses only ~30 selected frames)
+    for idx, port in enumerate(config.ports):
+      collected = collected_by_port[port]
       if not collected:
         raise ValueError(f"No charuco corners detected in intrinsic video for port {port}")
 
-      # Build ImagePoints from collected packets
       image_points = _build_image_points_from_packets(collected, port)
-
-      # Run intrinsic calibration
       camera = camera_array.cameras[port]
       output = run_intrinsic_calibration(camera, image_points)
 
-      # Update camera array
       camera_array.cameras[port] = output.camera
       intrinsic_rmse[port] = output.report.rmse
 
       _emit(on_progress, "intrinsic",
             f"Camera {port} calibrated: RMSE={output.report.rmse:.3f}px, "
             f"frames={output.report.frames_used}",
-            10 + (idx + 1) * 15)
+            30 + (idx + 1) * 5)
 
     # Save intermediate camera array
     save_camera_array(camera_array, project / "camera_array.toml")
