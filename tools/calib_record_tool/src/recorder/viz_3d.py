@@ -53,6 +53,42 @@ class Viz3DData:
 # Loading functions
 # ============================================================================
 
+def _smooth_frames_ema(
+  frames: dict[int, dict[int, tuple[float, float, float]]],
+  frame_indices: list[int],
+  alpha: float = 0.4,
+) -> None:
+  """Apply exponential moving average per landmark across frames (in-place).
+
+  For each point_id, smooths x/y/z independently over time:
+    smoothed[t] = alpha * raw[t] + (1 - alpha) * smoothed[t-1]
+
+  Gaps (frames where a landmark is missing) reset the filter.
+  """
+  # Collect all point IDs seen in any frame
+  all_pids: set[int] = set()
+  for pts in frames.values():
+    all_pids.update(pts.keys())
+
+  for pid in all_pids:
+    prev = None
+    for si in frame_indices:
+      pts = frames[si]
+      if pid not in pts:
+        prev = None  # gap resets filter
+        continue
+      raw = pts[pid]
+      if prev is None:
+        prev = raw
+      else:
+        prev = (
+          alpha * raw[0] + (1 - alpha) * prev[0],
+          alpha * raw[1] + (1 - alpha) * prev[1],
+          alpha * raw[2] + (1 - alpha) * prev[2],
+        )
+      pts[pid] = prev
+
+
 def load_xyz_csv(csv_path: Path) -> Viz3DData:
   """
   Load a caliscope xyz CSV file and parse into frame-indexed data.
@@ -96,6 +132,9 @@ def load_xyz_csv(csv_path: Path) -> Viz3DData:
     frames[int(sync_idx)] = points
 
   frame_indices = sorted(frames.keys())
+
+  # EMA smoothing per landmark to reduce jitter (alpha=0.4 for 60fps)
+  _smooth_frames_ema(frames, frame_indices, alpha=0.4)
 
   # Axis limits: use full min/max of already-filtered data (IQR removed outliers)
   all_x = df["x_coord"].values
@@ -231,8 +270,14 @@ def render_frame(ax, viz_data: Viz3DData, frame_idx: int):
 
 
 def _apply_axis_limits(ax, viz_data: Viz3DData):
-  """Set consistent axis limits."""
+  """Set consistent axis limits with proportional aspect ratio."""
   lim = viz_data.axis_limits
   ax.set_xlim(lim[0], lim[1])
   ax.set_ylim(lim[2], lim[3])
   ax.set_zlim(lim[4], lim[5])
+
+  # Proportional box: match real-world room shape instead of forced cube
+  x_range = max(lim[1] - lim[0], 0.01)
+  y_range = max(lim[3] - lim[2], 0.01)
+  z_range = max(lim[5] - lim[4], 0.01)
+  ax.set_box_aspect([x_range, y_range, z_range])
