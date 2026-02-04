@@ -97,19 +97,19 @@ def load_xyz_csv(csv_path: Path) -> Viz3DData:
 
   frame_indices = sorted(frames.keys())
 
-  # Compute axis limits using robust percentiles (2nd-98th) instead of min/max
+  # Axis limits: use full min/max of already-filtered data (IQR removed outliers)
   all_x = df["x_coord"].values
   all_y = df["y_coord"].values
   all_z = df["z_coord"].values
 
-  x_min, x_max = float(np.percentile(all_x, 2)), float(np.percentile(all_x, 98))
-  y_min, y_max = float(np.percentile(all_y, 2)), float(np.percentile(all_y, 98))
-  z_min, z_max = float(np.percentile(all_z, 2)), float(np.percentile(all_z, 98))
+  x_min, x_max = float(np.min(all_x)), float(np.max(all_x))
+  y_min, y_max = float(np.min(all_y)), float(np.max(all_y))
+  z_min, z_max = float(np.min(all_z)), float(np.max(all_z))
 
-  # Add 15% padding for comfortable view
-  pad_x = max((x_max - x_min) * 0.15, 0.05)
-  pad_y = max((y_max - y_min) * 0.15, 0.05)
-  pad_z = max((z_max - z_min) * 0.15, 0.05)
+  # Add 20% padding so the full body is comfortably visible
+  pad_x = max((x_max - x_min) * 0.20, 0.10)
+  pad_y = max((y_max - y_min) * 0.20, 0.10)
+  pad_z = max((z_max - z_min) * 0.20, 0.10)
 
   axis_limits = (
     x_min - pad_x, x_max + pad_x,
