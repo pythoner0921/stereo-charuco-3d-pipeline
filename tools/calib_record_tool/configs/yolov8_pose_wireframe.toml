@@ -1,0 +1,91 @@
+# YOLOv8-Pose wireframe definition (COCO 17 keypoints)
+
+[points]
+nose = 0
+left_eye = 1
+right_eye = 2
+left_ear = 3
+right_ear = 4
+left_shoulder = 5
+right_shoulder = 6
+left_elbow = 7
+right_elbow = 8
+left_wrist = 9
+right_wrist = 10
+left_hip = 11
+right_hip = 12
+left_knee = 13
+right_knee = 14
+left_ankle = 15
+right_ankle = 16
+
+# Face
+[nose_left_eye]
+color = "c"
+points = ["nose", "left_eye"]
+
+[nose_right_eye]
+color = "c"
+points = ["nose", "right_eye"]
+
+[left_eye_left_ear]
+color = "c"
+points = ["left_eye", "left_ear"]
+
+[right_eye_right_ear]
+color = "c"
+points = ["right_eye", "right_ear"]
+
+# Shoulders
+[shoulders]
+color = "y"
+points = ["left_shoulder", "right_shoulder"]
+
+# Left arm
+[left_upper_arm]
+color = "r"
+points = ["left_shoulder", "left_elbow"]
+
+[left_forearm]
+color = "r"
+points = ["left_elbow", "left_wrist"]
+
+# Right arm
+[right_upper_arm]
+color = "b"
+points = ["right_shoulder", "right_elbow"]
+
+[right_forearm]
+color = "b"
+points = ["right_elbow", "right_wrist"]
+
+# Torso
+[left_torso]
+color = "y"
+points = ["left_shoulder", "left_hip"]
+
+[right_torso]
+color = "y"
+points = ["right_shoulder", "right_hip"]
+
+[hips]
+color = "y"
+points = ["left_hip", "right_hip"]
+
+# Left leg
+[left_thigh]
+color = "r"
+points = ["left_hip", "left_knee"]
+
+[left_shin]
+color = "r"
+points = ["left_knee", "left_ankle"]
+
+# Right leg
+[right_thigh]
+color = "b"
+points = ["right_hip", "right_knee"]
+
+[right_shin]
+color = "b"
+points = ["right_knee", "right_ankle"]

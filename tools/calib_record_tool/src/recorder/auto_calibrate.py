@@ -685,6 +685,19 @@ def _filter_xyz_outliers(csv_path: Path, abs_limit: float = 20.0) -> tuple[int, 
   return n_before, n_after
 
 
+class _TrackerEnumCompat:
+  """Duck-type wrapper that mimics a TrackerEnum member.
+
+  Allows custom trackers (not registered in caliscope's TrackerEnum) to
+  be passed to caliscope's Reconstructor, which expects `enum.name` and
+  `enum.value()`.
+  """
+
+  def __init__(self, name: str, tracker_class):
+    self.name = name
+    self.value = tracker_class
+
+
 def run_auto_reconstruction(
   project_dir: Path,
   recording_name: str,
@@ -704,13 +717,20 @@ def run_auto_reconstruction(
   """
   from caliscope.persistence import load_camera_array
   from caliscope.reconstruction.reconstructor import Reconstructor
-  from caliscope.trackers.tracker_enum import TrackerEnum
 
   _emit(on_progress, "reconstruction", "Loading calibration data...", 0)
 
   camera_array = load_camera_array(project_dir / "camera_array.toml")
   recording_path = project_dir / "recordings" / recording_name
-  tracker_enum = TrackerEnum[tracker_name]
+
+  # Resolve tracker: use duck-type wrapper for custom trackers,
+  # caliscope TrackerEnum for built-in ones.
+  if tracker_name == "YOLOV8_POSE":
+    from .yolov8_pose_tracker import YoloV8PoseTracker
+    tracker_enum = _TrackerEnumCompat("YOLOV8_POSE", YoloV8PoseTracker)
+  else:
+    from caliscope.trackers.tracker_enum import TrackerEnum
+    tracker_enum = TrackerEnum[tracker_name]
 
   if not recording_path.exists():
     raise FileNotFoundError(f"Recording not found: {recording_path}")

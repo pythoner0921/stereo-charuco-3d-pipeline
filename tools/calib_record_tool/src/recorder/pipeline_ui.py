@@ -1284,15 +1284,18 @@ class PipelineUI(tk.Tk):
   # ========================================================================
 
   def _load_tracker_options(self):
-    """Load available tracker types from caliscope's TrackerEnum."""
+    """Load available tracker types from caliscope's TrackerEnum + custom trackers."""
     try:
       from caliscope.trackers.tracker_enum import TrackerEnum
       names = [t.name for t in TrackerEnum]
     except ImportError:
       names = ["HOLISTIC", "POSE", "HAND", "SIMPLE_HOLISTIC", "CHARUCO", "ARUCO"]
+    # Append custom trackers not in caliscope's enum
+    if "YOLOV8_POSE" not in names:
+      names.append("YOLOV8_POSE")
     self._tracker_combo["values"] = names
-    if "HOLISTIC" in names:
-      self.var_tracker.set("HOLISTIC")
+    if "YOLOV8_POSE" in names:
+      self.var_tracker.set("YOLOV8_POSE")
 
   def _refresh_recordings(self):
     """Refresh the recordings dropdown."""

@@ -178,41 +178,74 @@ def load_wireframe_for_tracker(tracker_name: str) -> list[WireSegment]:
   """
   Load wireframe segments for a given tracker type.
 
-  Uses caliscope's wireframe TOML files. Falls back to empty list
-  (points-only) if no wireframe is defined for the tracker.
+  Checks our bundled configs first, then caliscope's wireframe TOML files.
+  Falls back to empty list (points-only) if no wireframe is defined.
   """
-  try:
-    from caliscope.gui.geometry.wireframe import load_wireframe_config
-    import caliscope
-    caliscope_root = Path(caliscope.__file__).parent
-    toml_path = (
-      caliscope_root / "gui" / "geometry" / "wireframes"
-      / f"{tracker_name.lower()}_wireframe.toml"
-    )
+  # Check our bundled configs first (for custom trackers like YOLOV8_POSE)
+  bundled = Path(__file__).resolve().parent.parent.parent / "configs" / f"{tracker_name.lower()}_wireframe.toml"
+  toml_path = None
+  if bundled.exists():
+    toml_path = bundled
+  else:
+    try:
+      import caliscope
+      caliscope_root = Path(caliscope.__file__).parent
+      candidate = (
+        caliscope_root / "gui" / "geometry" / "wireframes"
+        / f"{tracker_name.lower()}_wireframe.toml"
+      )
+      if candidate.exists():
+        toml_path = candidate
+    except ImportError:
+      pass
 
-    if not toml_path.exists():
-      logger.info(f"No wireframe TOML for tracker '{tracker_name}', using points only")
+  if toml_path is None:
+    logger.info(f"No wireframe TOML for tracker '{tracker_name}', using points only")
+    return []
+
+  return _parse_wireframe_toml(toml_path)
+
+
+def _parse_wireframe_toml(toml_path: Path) -> list[WireSegment]:
+  """Parse a wireframe TOML file into WireSegment list."""
+  try:
+    import rtoml
+    with open(toml_path) as f:
+      data = rtoml.load(f)
+  except ImportError:
+    try:
+      import tomllib
+      with open(toml_path, "rb") as f:
+        data = tomllib.load(f)
+    except ImportError:
+      logger.warning("No TOML parser available (rtoml or tomllib)")
       return []
 
-    config = load_wireframe_config(toml_path)
-    segments = [
-      WireSegment(
-        name=seg.name,
-        point_a_id=seg.point_a_id,
-        point_b_id=seg.point_b_id,
-        color_rgb=seg.color_rgb,
-      )
-      for seg in config.segments
-    ]
-    logger.info(f"Loaded {len(segments)} wireframe segments for '{tracker_name}'")
-    return segments
+  points_map = data.get("points", {})
+  name_to_id = {name: pid for name, pid in points_map.items()}
 
-  except ImportError:
-    logger.warning("caliscope not available, cannot load wireframe")
-    return []
-  except Exception as e:
-    logger.warning(f"Failed to load wireframe for '{tracker_name}': {e}")
-    return []
+  color_map = {
+    "r": (1.0, 0.2, 0.2), "g": (0.2, 1.0, 0.2), "b": (0.2, 0.4, 1.0),
+    "c": (0.2, 0.9, 0.9), "m": (0.9, 0.2, 0.9), "y": (0.9, 0.9, 0.2),
+    "k": (0.3, 0.3, 0.3), "w": (1.0, 1.0, 1.0),
+  }
+
+  segments = []
+  for section, content in data.items():
+    if section == "points" or not isinstance(content, dict):
+      continue
+    seg_points = content.get("points", [])
+    color_key = content.get("color", "w")
+    if len(seg_points) == 2 and seg_points[0] in name_to_id and seg_points[1] in name_to_id:
+      segments.append(WireSegment(
+        name=section,
+        point_a_id=name_to_id[seg_points[0]],
+        point_b_id=name_to_id[seg_points[1]],
+        color_rgb=color_map.get(color_key, (1.0, 1.0, 1.0)),
+      ))
+
+  logger.info(f"Loaded {len(segments)} wireframe segments for '{toml_path.stem}'")
+  return segments
 
 
 # ============================================================================
