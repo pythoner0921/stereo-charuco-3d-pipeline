@@ -650,15 +650,14 @@ def _save_project_settings(project_dir: Path):
     logger.info(f"Created project settings at {settings_path}")
 
 
-def _filter_xyz_outliers(csv_path: Path, iqr_factor: float = 3.0) -> tuple[int, int]:
-  """Filter extreme outlier 3D points from a triangulated xyz CSV.
+def _filter_xyz_outliers(csv_path: Path, abs_limit: float = 20.0) -> tuple[int, int]:
+  """Remove physically impossible 3D points from a triangulated xyz CSV.
 
-  Narrow-baseline stereo (e.g. 8cm) can produce wildly wrong triangulations
-  when the SVD homogeneous coordinate approaches zero.  This removes only:
+  Only removes:
     1. Rows with inf / NaN coordinates
-    2. Extreme outliers beyond ``iqr_factor * IQR`` (default 3.0 — very
-       conservative, only catches truly broken triangulations)
+    2. Points with any coordinate beyond ±abs_limit meters (default 20m)
 
+  No statistical filtering (IQR) — legitimate body landmarks are never removed.
   The file is overwritten in-place; returns (n_before, n_after).
   """
   import pandas as pd
@@ -672,14 +671,9 @@ def _filter_xyz_outliers(csv_path: Path, iqr_factor: float = 3.0) -> tuple[int, 
   for col in coord_cols:
     df = df[np.isfinite(df[col])]
 
-  # 2. IQR-based: only remove extreme outliers (factor=3.0 is very conservative)
+  # 2. Absolute range clip — no room-scale point should be beyond ±20m
   for col in coord_cols:
-    q1 = df[col].quantile(0.25)
-    q3 = df[col].quantile(0.75)
-    iqr = q3 - q1
-    lower = q1 - iqr_factor * iqr
-    upper = q3 + iqr_factor * iqr
-    df = df[(df[col] >= lower) & (df[col] <= upper)]
+    df = df[(df[col] >= -abs_limit) & (df[col] <= abs_limit)]
 
   n_after = len(df)
   removed = n_before - n_after

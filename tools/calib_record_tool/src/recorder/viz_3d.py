@@ -139,19 +139,21 @@ def load_xyz_csv(csv_path: Path) -> Viz3DData:
 
   frame_indices = sorted(frames.keys())
 
-  # Axis limits: use full min/max of data
+  # Axis limits: percentile-based (5th-95th) so remaining outliers
+  # don't blow up the view.  All data points are kept — outliers simply
+  # fall outside the visible range and are clipped by matplotlib.
   all_x = df["x_coord"].values
   all_y = df["y_coord"].values
   all_z = df["z_coord"].values
 
-  x_min, x_max = float(np.min(all_x)), float(np.max(all_x))
-  y_min, y_max = float(np.min(all_y)), float(np.max(all_y))
-  z_min, z_max = float(np.min(all_z)), float(np.max(all_z))
+  x_min, x_max = float(np.percentile(all_x, 5)), float(np.percentile(all_x, 95))
+  y_min, y_max = float(np.percentile(all_y, 5)), float(np.percentile(all_y, 95))
+  z_min, z_max = float(np.percentile(all_z, 5)), float(np.percentile(all_z, 95))
 
-  # Add 40% padding so full body + movement range is comfortably visible
-  pad_x = max((x_max - x_min) * 0.40, 0.20)
-  pad_y = max((y_max - y_min) * 0.40, 0.20)
-  pad_z = max((z_max - z_min) * 0.40, 0.20)
+  # Add 50% padding so full body + movement is comfortably visible
+  pad_x = max((x_max - x_min) * 0.50, 0.30)
+  pad_y = max((y_max - y_min) * 0.50, 0.30)
+  pad_z = max((z_max - z_min) * 0.50, 0.30)
 
   axis_limits = (
     x_min - pad_x, x_max + pad_x,
