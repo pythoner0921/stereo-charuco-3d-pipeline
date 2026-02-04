@@ -9,3 +9,7 @@ dependencies:
   - pip:
     - git+https://github.com/mprib/caliscope.git
     - -e ./tools/calib_record_tool
+    # After env creation, force mediapipe downgrade:
+    #   pip install mediapipe==0.10.14
+    # caliscope requires >=0.10.20 but 0.10.14 is needed for
+    # compatibility with the holistic tracker on some systems.
