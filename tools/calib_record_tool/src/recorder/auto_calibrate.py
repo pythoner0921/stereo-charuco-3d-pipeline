@@ -650,14 +650,14 @@ def _save_project_settings(project_dir: Path):
     logger.info(f"Created project settings at {settings_path}")
 
 
-def _filter_xyz_outliers(csv_path: Path, iqr_factor: float = 1.5) -> tuple[int, int]:
-  """Filter outlier 3D points from a triangulated xyz CSV.
+def _filter_xyz_outliers(csv_path: Path, iqr_factor: float = 3.0) -> tuple[int, int]:
+  """Filter extreme outlier 3D points from a triangulated xyz CSV.
 
   Narrow-baseline stereo (e.g. 8cm) can produce wildly wrong triangulations
-  when the SVD homogeneous coordinate approaches zero.  This removes:
+  when the SVD homogeneous coordinate approaches zero.  This removes only:
     1. Rows with inf / NaN coordinates
-    2. Per-axis statistical outliers beyond ``iqr_factor * IQR`` from the
-       median (computed globally across all frames)
+    2. Extreme outliers beyond ``iqr_factor * IQR`` (default 3.0 — very
+       conservative, only catches truly broken triangulations)
 
   The file is overwritten in-place; returns (n_before, n_after).
   """
@@ -672,7 +672,7 @@ def _filter_xyz_outliers(csv_path: Path, iqr_factor: float = 1.5) -> tuple[int, 
   for col in coord_cols:
     df = df[np.isfinite(df[col])]
 
-  # 2. IQR-based outlier removal (global across all frames)
+  # 2. IQR-based: only remove extreme outliers (factor=3.0 is very conservative)
   for col in coord_cols:
     q1 = df[col].quantile(0.25)
     q3 = df[col].quantile(0.75)

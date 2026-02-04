@@ -123,24 +123,10 @@ def load_xyz_csv(csv_path: Path) -> Viz3DData:
   if missing:
     raise ValueError(f"CSV missing columns: {missing}")
 
-  # Drop rows with NaN / inf coordinates
+  # Drop rows with NaN / inf coordinates only (no IQR — auto_calibrate already filtered)
   df = df.dropna(subset=["x_coord", "y_coord", "z_coord"])
   for col in ("x_coord", "y_coord", "z_coord"):
     df = df[np.isfinite(df[col])]
-
-  # Robust outlier removal (IQR-based) to prevent axis blowup
-  coord_cols = ["x_coord", "y_coord", "z_coord"]
-  n_raw = len(df)
-  for col in coord_cols:
-    q1 = df[col].quantile(0.25)
-    q3 = df[col].quantile(0.75)
-    iqr = q3 - q1
-    lower = q1 - 2.0 * iqr
-    upper = q3 + 2.0 * iqr
-    df = df[(df[col] >= lower) & (df[col] <= upper)]
-  if len(df) < n_raw:
-    logger.info(f"Viz outlier filter: {n_raw} -> {len(df)} points "
-                f"(removed {n_raw - len(df)})")
 
   # Build frame dictionary
   frames: dict[int, dict[int, tuple[float, float, float]]] = {}
@@ -153,10 +139,7 @@ def load_xyz_csv(csv_path: Path) -> Viz3DData:
 
   frame_indices = sorted(frames.keys())
 
-  # Bidirectional EMA smoothing per landmark to reduce jitter
-  _smooth_frames_ema(frames, frame_indices, alpha=0.25)
-
-  # Axis limits: use full min/max of already-filtered data (IQR removed outliers)
+  # Axis limits: use full min/max of data
   all_x = df["x_coord"].values
   all_y = df["y_coord"].values
   all_z = df["z_coord"].values
