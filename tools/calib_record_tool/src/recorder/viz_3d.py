@@ -67,8 +67,24 @@ def load_xyz_csv(csv_path: Path) -> Viz3DData:
   if missing:
     raise ValueError(f"CSV missing columns: {missing}")
 
-  # Drop rows with NaN coordinates
+  # Drop rows with NaN / inf coordinates
   df = df.dropna(subset=["x_coord", "y_coord", "z_coord"])
+  for col in ("x_coord", "y_coord", "z_coord"):
+    df = df[np.isfinite(df[col])]
+
+  # Robust outlier removal (IQR-based) to prevent axis blowup
+  coord_cols = ["x_coord", "y_coord", "z_coord"]
+  n_raw = len(df)
+  for col in coord_cols:
+    q1 = df[col].quantile(0.25)
+    q3 = df[col].quantile(0.75)
+    iqr = q3 - q1
+    lower = q1 - 2.0 * iqr
+    upper = q3 + 2.0 * iqr
+    df = df[(df[col] >= lower) & (df[col] <= upper)]
+  if len(df) < n_raw:
+    logger.info(f"Viz outlier filter: {n_raw} -> {len(df)} points "
+                f"(removed {n_raw - len(df)})")
 
   # Build frame dictionary
   frames: dict[int, dict[int, tuple[float, float, float]]] = {}
@@ -81,19 +97,19 @@ def load_xyz_csv(csv_path: Path) -> Viz3DData:
 
   frame_indices = sorted(frames.keys())
 
-  # Compute axis limits from all points (with 10% padding)
+  # Compute axis limits using robust percentiles (2nd-98th) instead of min/max
   all_x = df["x_coord"].values
   all_y = df["y_coord"].values
   all_z = df["z_coord"].values
 
-  x_min, x_max = float(np.min(all_x)), float(np.max(all_x))
-  y_min, y_max = float(np.min(all_y)), float(np.max(all_y))
-  z_min, z_max = float(np.min(all_z)), float(np.max(all_z))
+  x_min, x_max = float(np.percentile(all_x, 2)), float(np.percentile(all_x, 98))
+  y_min, y_max = float(np.percentile(all_y, 2)), float(np.percentile(all_y, 98))
+  z_min, z_max = float(np.percentile(all_z, 2)), float(np.percentile(all_z, 98))
 
-  # Add padding
-  pad_x = max((x_max - x_min) * 0.1, 0.01)
-  pad_y = max((y_max - y_min) * 0.1, 0.01)
-  pad_z = max((z_max - z_min) * 0.1, 0.01)
+  # Add 15% padding for comfortable view
+  pad_x = max((x_max - x_min) * 0.15, 0.05)
+  pad_y = max((y_max - y_min) * 0.15, 0.05)
+  pad_z = max((z_max - z_min) * 0.15, 0.05)
 
   axis_limits = (
     x_min - pad_x, x_max + pad_x,
@@ -102,7 +118,9 @@ def load_xyz_csv(csv_path: Path) -> Viz3DData:
   )
 
   logger.info(f"Loaded {len(frame_indices)} frames, "
-              f"{len(df)} total points")
+              f"{len(df)} total points, "
+              f"axis range: x=[{x_min:.2f},{x_max:.2f}] "
+              f"y=[{y_min:.2f},{y_max:.2f}] z=[{z_min:.2f},{z_max:.2f}]")
 
   return Viz3DData(
     frames=frames,
@@ -183,8 +201,8 @@ def render_frame(ax, viz_data: Viz3DData, frame_idx: int):
   coords = np.array([points[pid] for pid in pids])
   xs, ys, zs = coords[:, 0], coords[:, 1], coords[:, 2]
 
-  # Draw points
-  ax.scatter(xs, ys, zs, c="#00BFFF", s=8, alpha=0.8, depthshade=True)
+  # Draw points (size scales with axis range for consistent visibility)
+  ax.scatter(xs, ys, zs, c="#00BFFF", s=30, alpha=0.8, depthshade=True)
 
   # Draw wireframe segments
   if viz_data.segments:
@@ -195,7 +213,7 @@ def render_frame(ax, viz_data: Viz3DData, frame_idx: int):
         pb = point_lookup[seg.point_b_id]
         ax.plot(
           [pa[0], pb[0]], [pa[1], pb[1]], [pa[2], pb[2]],
-          color=seg.color_rgb, linewidth=1.2, alpha=0.9,
+          color=seg.color_rgb, linewidth=2.0, alpha=0.9,
         )
 
   _apply_axis_limits(ax, viz_data)

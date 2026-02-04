@@ -650,6 +650,47 @@ def _save_project_settings(project_dir: Path):
     logger.info(f"Created project settings at {settings_path}")
 
 
+def _filter_xyz_outliers(csv_path: Path, iqr_factor: float = 1.5) -> tuple[int, int]:
+  """Filter outlier 3D points from a triangulated xyz CSV.
+
+  Narrow-baseline stereo (e.g. 8cm) can produce wildly wrong triangulations
+  when the SVD homogeneous coordinate approaches zero.  This removes:
+    1. Rows with inf / NaN coordinates
+    2. Per-axis statistical outliers beyond ``iqr_factor * IQR`` from the
+       median (computed globally across all frames)
+
+  The file is overwritten in-place; returns (n_before, n_after).
+  """
+  import pandas as pd
+
+  df = pd.read_csv(csv_path)
+  n_before = len(df)
+
+  coord_cols = ["x_coord", "y_coord", "z_coord"]
+
+  # 1. Drop inf / NaN
+  for col in coord_cols:
+    df = df[np.isfinite(df[col])]
+
+  # 2. IQR-based outlier removal (global across all frames)
+  for col in coord_cols:
+    q1 = df[col].quantile(0.25)
+    q3 = df[col].quantile(0.75)
+    iqr = q3 - q1
+    lower = q1 - iqr_factor * iqr
+    upper = q3 + iqr_factor * iqr
+    df = df[(df[col] >= lower) & (df[col] <= upper)]
+
+  n_after = len(df)
+  removed = n_before - n_after
+  if removed > 0:
+    logger.info(f"Outlier filter: removed {removed} of {n_before} points "
+                f"({removed / max(n_before, 1) * 100:.1f}%)")
+
+  df.to_csv(csv_path, index=False)
+  return n_before, n_after
+
+
 def run_auto_reconstruction(
   project_dir: Path,
   recording_name: str,
@@ -695,6 +736,13 @@ def run_auto_reconstruction(
   reconstructor.create_xyz()
 
   output_path = recording_path / tracker_enum.name / f"xyz_{tracker_enum.name}.csv"
+
+  # Stage 3: Filter outlier 3D points (critical for narrow-baseline stereo)
+  _emit(on_progress, "reconstruction", "Filtering 3D outliers...", 90)
+  n_before, n_after = _filter_xyz_outliers(output_path)
+  _emit(on_progress, "reconstruction",
+        f"Filtered {n_before - n_after} outlier points ({n_before} -> {n_after})", 95)
+
   _emit(on_progress, "reconstruction", f"Reconstruction complete: {output_path}", 100)
 
   return output_path
