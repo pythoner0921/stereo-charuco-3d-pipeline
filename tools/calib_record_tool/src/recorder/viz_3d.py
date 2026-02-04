@@ -56,37 +56,57 @@ class Viz3DData:
 def _smooth_frames_ema(
   frames: dict[int, dict[int, tuple[float, float, float]]],
   frame_indices: list[int],
-  alpha: float = 0.4,
+  alpha: float = 0.25,
 ) -> None:
-  """Apply exponential moving average per landmark across frames (in-place).
+  """Bidirectional EMA smoothing per landmark (in-place, no lag).
 
-  For each point_id, smooths x/y/z independently over time:
-    smoothed[t] = alpha * raw[t] + (1 - alpha) * smoothed[t-1]
-
+  Forward pass followed by backward pass, then averaged.  This eliminates
+  the lag that single-pass EMA introduces while providing strong smoothing.
   Gaps (frames where a landmark is missing) reset the filter.
   """
-  # Collect all point IDs seen in any frame
   all_pids: set[int] = set()
   for pts in frames.values():
     all_pids.update(pts.keys())
 
   for pid in all_pids:
-    prev = None
-    for si in frame_indices:
-      pts = frames[si]
-      if pid not in pts:
-        prev = None  # gap resets filter
-        continue
-      raw = pts[pid]
-      if prev is None:
-        prev = raw
-      else:
-        prev = (
-          alpha * raw[0] + (1 - alpha) * prev[0],
-          alpha * raw[1] + (1 - alpha) * prev[1],
-          alpha * raw[2] + (1 - alpha) * prev[2],
-        )
-      pts[pid] = prev
+    # Collect indices where this landmark exists
+    present = [(i, si) for i, si in enumerate(frame_indices) if pid in frames[si]]
+    if len(present) < 3:
+      continue
+
+    # Extract raw values
+    raw_vals = [frames[si][pid] for _, si in present]
+
+    # Forward pass
+    fwd = [raw_vals[0]]
+    for k in range(1, len(raw_vals)):
+      p = fwd[-1]
+      r = raw_vals[k]
+      fwd.append((
+        alpha * r[0] + (1 - alpha) * p[0],
+        alpha * r[1] + (1 - alpha) * p[1],
+        alpha * r[2] + (1 - alpha) * p[2],
+      ))
+
+    # Backward pass
+    bwd = [None] * len(raw_vals)
+    bwd[-1] = raw_vals[-1]
+    for k in range(len(raw_vals) - 2, -1, -1):
+      p = bwd[k + 1]
+      r = raw_vals[k]
+      bwd[k] = (
+        alpha * r[0] + (1 - alpha) * p[0],
+        alpha * r[1] + (1 - alpha) * p[1],
+        alpha * r[2] + (1 - alpha) * p[2],
+      )
+
+    # Average forward + backward
+    for k, (_, si) in enumerate(present):
+      frames[si][pid] = (
+        (fwd[k][0] + bwd[k][0]) * 0.5,
+        (fwd[k][1] + bwd[k][1]) * 0.5,
+        (fwd[k][2] + bwd[k][2]) * 0.5,
+      )
 
 
 def load_xyz_csv(csv_path: Path) -> Viz3DData:
@@ -133,8 +153,8 @@ def load_xyz_csv(csv_path: Path) -> Viz3DData:
 
   frame_indices = sorted(frames.keys())
 
-  # EMA smoothing per landmark to reduce jitter (alpha=0.4 for 60fps)
-  _smooth_frames_ema(frames, frame_indices, alpha=0.4)
+  # Bidirectional EMA smoothing per landmark to reduce jitter
+  _smooth_frames_ema(frames, frame_indices, alpha=0.25)
 
   # Axis limits: use full min/max of already-filtered data (IQR removed outliers)
   all_x = df["x_coord"].values
@@ -145,10 +165,10 @@ def load_xyz_csv(csv_path: Path) -> Viz3DData:
   y_min, y_max = float(np.min(all_y)), float(np.max(all_y))
   z_min, z_max = float(np.min(all_z)), float(np.max(all_z))
 
-  # Add 20% padding so the full body is comfortably visible
-  pad_x = max((x_max - x_min) * 0.20, 0.10)
-  pad_y = max((y_max - y_min) * 0.20, 0.10)
-  pad_z = max((z_max - z_min) * 0.20, 0.10)
+  # Add 40% padding so full body + movement range is comfortably visible
+  pad_x = max((x_max - x_min) * 0.40, 0.20)
+  pad_y = max((y_max - y_min) * 0.40, 0.20)
+  pad_z = max((z_max - z_min) * 0.40, 0.20)
 
   axis_limits = (
     x_min - pad_x, x_max + pad_x,

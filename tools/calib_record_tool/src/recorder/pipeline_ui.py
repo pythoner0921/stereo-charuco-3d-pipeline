@@ -1410,14 +1410,14 @@ class PipelineUI(tk.Tk):
 
     # ── Matplotlib 3D canvas ──
     if MPL_AVAILABLE:
-      self._viz_fig = Figure(figsize=(8, 4), dpi=80, facecolor="#1a1a1a")
+      self._viz_fig = Figure(figsize=(10, 7), dpi=90, facecolor="#1a1a1a")
       self._viz_ax = self._viz_fig.add_subplot(111, projection="3d")
       self._viz_ax.set_facecolor("#1a1a1a")
-      self._viz_fig.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
+      self._viz_fig.subplots_adjust(left=0.0, right=1.0, top=1.0, bottom=0.0)
 
       self._viz_canvas = FigureCanvasTkAgg(self._viz_fig, master=viz_inner)
-      self._viz_canvas.get_tk_widget().configure(height=350, bg="#1a1a1a")
-      self._viz_canvas.get_tk_widget().pack(fill=tk.X, pady=(8, 0))
+      self._viz_canvas.get_tk_widget().configure(height=550, bg="#1a1a1a")
+      self._viz_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, pady=(8, 0))
       self._viz_canvas.draw()
     else:
       tk.Label(
