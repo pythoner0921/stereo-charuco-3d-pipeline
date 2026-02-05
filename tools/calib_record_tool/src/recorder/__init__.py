@@ -4,6 +4,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+# ── Check caliscope dependency early with a clear message ──
+try:
+    import caliscope.core  # noqa: F401
+except ImportError:
+    raise ImportError(
+        "\n\ncaliscope is not installed (or wrong version).\n"
+        "Install the pinned version:\n\n"
+        "  pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e\n\n"
+        "PyPI caliscope is outdated — you must install from GitHub.\n"
+    )
+
 from .config import RecorderConfig
 from .ffmpeg import FFmpegRunner, python_executable
 

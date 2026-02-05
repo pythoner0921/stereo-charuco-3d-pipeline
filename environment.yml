@@ -7,7 +7,7 @@ dependencies:
   - pip
   - ffmpeg
   - pip:
-    - git+https://github.com/mprib/caliscope.git
+    - git+https://github.com/mprib/caliscope.git@8dc0cd4e
     - -e ./tools/calib_record_tool
     # After env creation, force mediapipe downgrade:
     #   pip install mediapipe==0.10.14

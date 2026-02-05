@@ -30,7 +30,7 @@ conda create -n caliscope311 python=3.11 pip ffmpeg -c conda-forge -y
 conda activate caliscope311
 
 # 2. Install caliscope (must be from GitHub, not PyPI)
-pip install git+https://github.com/mprib/caliscope.git
+pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e
 
 # 3. Install this pipeline
 pip install stereo-charuco-pipeline
@@ -56,7 +56,7 @@ conda create -n caliscope311 python=3.11 pip ffmpeg -c conda-forge -y
 conda activate caliscope311
 
 # 3. Install caliscope
-pip install git+https://github.com/mprib/caliscope.git
+pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e
 
 # 4. Install in editable mode
 cd tools/calib_record_tool
@@ -235,6 +235,13 @@ project_YYYYMMDD_HHMMSS/
 
 ## Troubleshooting
 
+### `No module named 'caliscope.core'`
+
+caliscope must be installed from GitHub (the PyPI version is outdated):
+```bash
+pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e
+```
+
 ### `cv2` has no attribute `aruco`
 
 ```bash
@@ -266,6 +273,7 @@ Set `chcp 65001` before running conda commands.
 
 | Version | Changes |
 |---------|---------|
+| 0.3.3 | Pin caliscope to commit 8dc0cd4e, add missing-dependency error message |
 | 0.3.2 | Performance: parallel video split, reconstruction FPS control, faster bundle adjustment |
 | 0.3.1 | Bundle adjustment tuning, OpenCV dependency ordering fix |
 | 0.3.0 | YOLOv8-Pose tracker integration |
