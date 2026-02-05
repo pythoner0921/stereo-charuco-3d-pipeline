@@ -159,9 +159,12 @@ Post-processing splits the stereo AVI into left/right MP4 files (parallel FFmpeg
 
 - Select a recording and tracker type
 - **Trackers**: YOLOV8_POSE (recommended), HOLISTIC, POSE, HAND
-- **FPS**: Target framerate for processing (default 20). Lower = faster processing.
-  - 60fps recording at FPS=20 processes only 1/3 of frames (~3x speedup)
-  - For normal human motion, 15-20fps is sufficient
+- **Model Size** (YOLOV8 only): Nano (fastest) / Small / Medium (most accurate)
+- **Infer Size** (YOLOV8 only): 320px (fastest) / 480px (balanced) / 640px (best accuracy)
+- **FPS**: Target framerate for processing (default 10). Lower = faster processing.
+  - 60fps recording at FPS=10 processes only 1/6 of frames (~6x speedup)
+  - For normal human motion, 10-15fps is sufficient
+- **Outlier filtering**: Per-keypoint IQR + velocity-based filtering removes triangulation drift
 - Output: `xyz_{TRACKER}.csv` with 3D coordinates per frame
 
 ### Panel 4: 3D Visualization
@@ -297,6 +300,7 @@ Set `chcp 65001` before running conda commands.
 
 | Version | Changes |
 |---------|---------|
+| 0.4.0 | YOLO model/resolution UI controls, skeleton wireframe in 3D viz, IQR+velocity outlier filtering, fix multi-window crash |
 | 0.3.6 | Pin numpy<2.4, PySide6 >=6.5.0, startup checks for caliscope + aruco |
 | 0.3.3 | Pin caliscope to commit 8dc0cd4e, add missing-dependency error message |
 | 0.3.2 | Performance: parallel video split, reconstruction FPS control, faster bundle adjustment |
