@@ -38,14 +38,17 @@ pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e
 # 3. Install this pipeline
 pip install stereo-charuco-pipeline
 
-# 4. Fix OpenCV conflict (ultralytics overwrites aruco module)
-pip uninstall opencv-python opencv-python-headless -y
-pip install opencv-contrib-python>=4.8.0.74
+# 4. Fix dependency conflicts (required after every install/upgrade)
+pip install pyside6-essentials==6.8.1 shiboken6==6.8.1   # PySide6 6.10+ has DLL issues
+pip install --force-reinstall --no-cache-dir opencv-contrib-python>=4.8.0.74  # restore aruco
+pip install "numpy<2.4"                                    # numba requires numpy<2.4
 ```
 
 > **Important**: Step 4 is required every time you install or upgrade.
-> `ultralytics` pulls in `opencv-python` which lacks `cv2.aruco`.
-> You must reinstall `opencv-contrib-python` after installation.
+> These fixes resolve three known conflicts:
+> - `ultralytics` installs `opencv-python` which lacks `cv2.aruco`
+> - `PySide6 >= 6.10` causes DLL load failures on some Windows machines
+> - `opencv-contrib-python` reinstall may pull `numpy >= 2.4` which breaks `numba`
 
 ### Method 2: Clone from GitHub (for development)
 
@@ -65,9 +68,10 @@ pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e
 cd tools/calib_record_tool
 pip install -e .
 
-# 5. Fix OpenCV conflict
-pip uninstall opencv-python opencv-python-headless -y
-pip install opencv-contrib-python>=4.8.0.74
+# 5. Fix dependency conflicts
+pip install pyside6-essentials==6.8.1 shiboken6==6.8.1
+pip install --force-reinstall --no-cache-dir opencv-contrib-python>=4.8.0.74
+pip install "numpy<2.4"
 ```
 
 ### Conda environment.yml (alternative)
@@ -76,9 +80,10 @@ pip install opencv-contrib-python>=4.8.0.74
 conda env create -f environment.yml
 conda activate stereo-pipeline
 
-# Fix OpenCV conflict after environment creation
-pip uninstall opencv-python opencv-python-headless -y
-pip install opencv-contrib-python>=4.8.0.74
+# Fix dependency conflicts after environment creation
+pip install pyside6-essentials==6.8.1 shiboken6==6.8.1
+pip install --force-reinstall --no-cache-dir opencv-contrib-python>=4.8.0.74
+pip install "numpy<2.4"
 ```
 
 > If `conda env create` fails with encoding errors on Japanese/Chinese Windows,
@@ -258,15 +263,21 @@ pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e
 ### `cv2` has no attribute `aruco`
 
 ```bash
-pip uninstall opencv-python opencv-python-headless -y
-pip install opencv-contrib-python>=4.8.0.74
+pip install --force-reinstall --no-cache-dir opencv-contrib-python>=4.8.0.74
+pip install "numpy<2.4"
 ```
 
-### PySide6 DLL load failed
+### PySide6 DLL load failed (`找不到指定的程序`)
 
-Install Visual C++ Redistributable:
+Downgrade PySide6 to a compatible version:
 ```bash
-winget install Microsoft.VCRedist.2015+.x64
+pip install pyside6-essentials==6.8.1 shiboken6==6.8.1
+```
+
+### `Numba needs NumPy 2.3 or less`
+
+```bash
+pip install "numpy<2.4"
 ```
 
 ### Bundle adjustment hangs / very slow
@@ -286,6 +297,7 @@ Set `chcp 65001` before running conda commands.
 
 | Version | Changes |
 |---------|---------|
+| 0.3.6 | Pin numpy<2.4, PySide6 >=6.5.0, startup checks for caliscope + aruco |
 | 0.3.3 | Pin caliscope to commit 8dc0cd4e, add missing-dependency error message |
 | 0.3.2 | Performance: parallel video split, reconstruction FPS control, faster bundle adjustment |
 | 0.3.1 | Bundle adjustment tuning, OpenCV dependency ordering fix |
