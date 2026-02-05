@@ -576,7 +576,44 @@ class PipelineUI(tk.Tk):
       state="readonly", width=20,
     )
     self._tracker_combo.pack(side=tk.LEFT, padx=5)
+    self._tracker_combo.bind("<<ComboboxSelected>>", self._on_tracker_changed)
     self._load_tracker_options()
+
+    # YOLO model size selection row (visible only for YOLOV8_POSE)
+    self._model_row = tk.Frame(recon_inner, bg=BG_PANEL)
+    self._model_row.pack(fill=tk.X, pady=(6, 0))
+
+    tk.Label(
+      self._model_row, text="Model:",
+      font=("Segoe UI", 10), fg=FG, bg=BG_PANEL,
+    ).pack(side=tk.LEFT)
+
+    self.var_model_size = tk.StringVar(value="n")
+    self._model_combo = ttk.Combobox(
+      self._model_row, textvariable=self.var_model_size,
+      state="readonly", width=20,
+      values=["n  (Nano - fastest)", "s  (Small)", "m  (Medium - accurate)"],
+    )
+    self._model_combo.pack(side=tk.LEFT, padx=5)
+    self._model_combo.current(0)
+
+    # YOLO inference resolution row (visible only for YOLOV8_POSE)
+    self._imgsz_row = tk.Frame(recon_inner, bg=BG_PANEL)
+    self._imgsz_row.pack(fill=tk.X, pady=(6, 0))
+
+    tk.Label(
+      self._imgsz_row, text="Infer Size:",
+      font=("Segoe UI", 10), fg=FG, bg=BG_PANEL,
+    ).pack(side=tk.LEFT)
+
+    self.var_imgsz = tk.StringVar(value="480")
+    self._imgsz_combo = ttk.Combobox(
+      self._imgsz_row, textvariable=self.var_imgsz,
+      state="readonly", width=20,
+      values=["320  (fastest)", "480  (balanced)", "640  (best accuracy)"],
+    )
+    self._imgsz_combo.pack(side=tk.LEFT, padx=5)
+    self._imgsz_combo.current(1)
 
     # FPS selection row
     fps_row = tk.Frame(recon_inner, bg=BG_PANEL)
@@ -587,7 +624,7 @@ class PipelineUI(tk.Tk):
       font=("Segoe UI", 10), fg=FG, bg=BG_PANEL,
     ).pack(side=tk.LEFT)
 
-    self.var_recon_fps = tk.StringVar(value="20")
+    self.var_recon_fps = tk.StringVar(value="10")
     self._fps_combo = ttk.Combobox(
       fps_row, textvariable=self.var_recon_fps,
       state="readonly", width=6,
@@ -1313,6 +1350,21 @@ class PipelineUI(tk.Tk):
     self._tracker_combo["values"] = names
     if "YOLOV8_POSE" in names:
       self.var_tracker.set("YOLOV8_POSE")
+    self._toggle_yolo_options()
+
+  def _on_tracker_changed(self, event=None):
+    """Show/hide YOLO-specific options based on selected tracker."""
+    self._toggle_yolo_options()
+
+  def _toggle_yolo_options(self):
+    """Show YOLO model/imgsz rows only when YOLOV8_POSE is selected."""
+    is_yolo = self.var_tracker.get() == "YOLOV8_POSE"
+    if is_yolo:
+      self._model_row.pack(fill=tk.X, pady=(6, 0), after=self._tracker_combo.master)
+      self._imgsz_row.pack(fill=tk.X, pady=(6, 0), after=self._model_row)
+    else:
+      self._model_row.pack_forget()
+      self._imgsz_row.pack_forget()
 
   def _refresh_recordings(self):
     """Refresh the recordings dropdown."""
@@ -1362,11 +1414,18 @@ class PipelineUI(tk.Tk):
       def on_progress(stage, msg, pct):
         self._msg_queue.put(("recon_progress", (stage, msg, pct)))
 
+      # Extract YOLO model size letter from combo text (e.g., "n  (Nano - fastest)" → "n")
+      model_size = self.var_model_size.get().split()[0]
+      # Extract imgsz number from combo text (e.g., "480  (balanced)" → 480)
+      imgsz = int(self.var_imgsz.get().split()[0])
+
       output_path = run_auto_reconstruction(
         self._project_dir,
         recording_name,
         tracker_name=self.var_tracker.get(),
         fps_target=int(self.var_recon_fps.get()),
+        model_size=model_size,
+        imgsz=imgsz,
         on_progress=on_progress,
       )
 

@@ -52,7 +52,9 @@ class YoloV8PoseTracker(Tracker):
   model instance, matching the pattern used by caliscope's PoseTracker.
   """
 
-  def __init__(self) -> None:
+  def __init__(self, model_size: str = "n", imgsz: int = 480) -> None:
+    self.model_size = model_size
+    self.imgsz = imgsz
     self.in_queues: dict[int, Queue] = {}
     self.out_queues: dict[int, Queue] = {}
     self.threads: dict[int, Thread] = {}
@@ -130,8 +132,8 @@ class YoloV8PoseTracker(Tracker):
   def _worker_loop(self, port: int, rotation_count: int) -> None:
     from ultralytics import YOLO
 
-    model = YOLO("yolov8m-pose.pt")
-    logger.info(f"YOLOv8-Pose model loaded for port {port}")
+    model = YOLO(f"yolov8{self.model_size}-pose.pt")
+    logger.info(f"YOLOv8{self.model_size}-Pose model loaded for port {port} (imgsz={self.imgsz})")
 
     in_q = self.in_queues[port]
     out_q = self.out_queues[port]
@@ -151,11 +153,10 @@ class YoloV8PoseTracker(Tracker):
     gc.collect()
     logger.info(f"YOLOv8-Pose worker for port {port} shut down")
 
-  @staticmethod
   def _detect(
-    model, frame: np.ndarray, rotation_count: int, frame_w: int, frame_h: int,
+    self, model, frame: np.ndarray, rotation_count: int, frame_w: int, frame_h: int,
   ) -> PointPacket:
-    results = model(frame, verbose=False)
+    results = model(frame, verbose=False, imgsz=self.imgsz)
 
     if not results or len(results) == 0:
       return PointPacket(np.array([], dtype=np.int32), np.array([]).reshape(0, 2))

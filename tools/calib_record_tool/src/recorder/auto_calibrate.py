@@ -702,7 +702,9 @@ def run_auto_reconstruction(
   project_dir: Path,
   recording_name: str,
   tracker_name: str = "HOLISTIC",
-  fps_target: int = 20,
+  fps_target: int = 10,
+  model_size: str = "n",
+  imgsz: int = 480,
   on_progress: Optional[ProgressCallback] = None,
 ) -> Path:
   """Run 3D reconstruction on a recording session.
@@ -712,6 +714,8 @@ def run_auto_reconstruction(
     recording_name: Name of recording subdirectory under recordings/
     tracker_name: Tracker to use (HOLISTIC, POSE, HAND, etc.)
     fps_target: Target FPS for 2D landmark detection (lower = faster)
+    model_size: YOLOv8 model size variant (n/s/m) — only used for YOLOV8_POSE
+    imgsz: YOLOv8 inference resolution in pixels — only used for YOLOV8_POSE
     on_progress: Optional callback for progress updates
 
   Returns:
@@ -728,8 +732,10 @@ def run_auto_reconstruction(
   # Resolve tracker: use duck-type wrapper for custom trackers,
   # caliscope TrackerEnum for built-in ones.
   if tracker_name == "YOLOV8_POSE":
+    from functools import partial
     from .yolov8_pose_tracker import YoloV8PoseTracker
-    tracker_enum = _TrackerEnumCompat("YOLOV8_POSE", YoloV8PoseTracker)
+    tracker_factory = partial(YoloV8PoseTracker, model_size=model_size, imgsz=imgsz)
+    tracker_enum = _TrackerEnumCompat("YOLOV8_POSE", tracker_factory)
   else:
     from caliscope.trackers.tracker_enum import TrackerEnum
     tracker_enum = TrackerEnum[tracker_name]
