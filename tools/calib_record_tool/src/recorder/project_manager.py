@@ -50,8 +50,11 @@ class _ProjectInfo:
 class ProjectManagerUI(tk.Tk):
   """Project selection/creation dialog."""
 
-  def __init__(self, projects_base: Path):
-    super().__init__()
+  def __init__(self, projects_base: Path, master=None):
+    if master is not None:
+      tk.Toplevel.__init__(self, master)
+    else:
+      tk.Tk.__init__(self)
 
     self.projects_base = projects_base
     self.projects_base.mkdir(parents=True, exist_ok=True)

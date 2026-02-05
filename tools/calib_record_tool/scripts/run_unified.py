@@ -7,13 +7,14 @@ Unified launcher for the stereo pipeline.
   3. Pipeline UI      -> calibrate, record, reconstruct, visualize
 
 Usage:
-  conda activate caliscope311
+  conda activate stereo-pipeline
   python scripts/run_unified.py
   python scripts/run_unified.py --config configs/default.yaml
 """
 import argparse
 import logging
 import sys
+import tkinter as tk
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -48,15 +49,22 @@ def main():
   # Resolve projects base
   projects_base = Path(args.projects_base) if args.projects_base else DEFAULT_PROJECTS_BASE
 
+  # Create a single persistent Tk root.
+  # Each stage opens as a Toplevel of this root, avoiding the Windows crash
+  # caused by creating/destroying multiple tk.Tk() instances.
+  root = tk.Tk()
+  root.withdraw()
+
   # ── Stage 1: Project Manager ──────────────────────────────
   from recorder.project_manager import ProjectManagerUI
 
-  pm = ProjectManagerUI(projects_base)
-  pm.mainloop()
+  pm = ProjectManagerUI(projects_base, master=root)
+  root.wait_window(pm)
 
   context = pm.result
   if context is None:
     print("No project selected. Exiting.")
+    root.destroy()
     return
 
   print(f"Project: {context.project_dir}")
@@ -72,10 +80,10 @@ def main():
     calib_app = CalibrationUIAdvanced(
       config_path=config_path,
       project_dir=context.project_dir,
-      on_complete=lambda: None,  # Signal handled via destroy()
+      on_complete=lambda: None,
+      master=root,
     )
-    calib_app.mainloop()
-    # mainloop returns when user closes window or clicks "Continue"
+    root.wait_window(calib_app)
 
   # ── Stage 3: Pipeline UI ──────────────────────────────────
   print("\nOpening Pipeline UI...")
@@ -85,10 +93,12 @@ def main():
   pipeline_app = PipelineUI(
     config_path=config_path,
     project_dir=context.project_dir,
+    master=root,
   )
-  pipeline_app.mainloop()
+  root.wait_window(pipeline_app)
 
   print("\nPipeline closed.")
+  root.destroy()
 
 
 if __name__ == "__main__":

@@ -491,8 +491,12 @@ class CalibrationUIAdvanced(tk.Tk):
 
     def __init__(self, config_path: Optional[Path] = None,
                  project_dir: Optional[Path] = None,
-                 on_complete: Optional[Callable[[], None]] = None):
-        super().__init__()
+                 on_complete: Optional[Callable[[], None]] = None,
+                 master=None):
+        if master is not None:
+            tk.Toplevel.__init__(self, master)
+        else:
+            tk.Tk.__init__(self)
 
         self._load_config(config_path)
 

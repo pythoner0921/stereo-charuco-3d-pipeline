@@ -72,8 +72,12 @@ class PipelineUI(tk.Tk):
   """Simplified pipeline: calibrate -> record -> reconstruct."""
 
   def __init__(self, config_path: Optional[Path] = None,
-               project_dir: Optional[Path] = None):
-    super().__init__()
+               project_dir: Optional[Path] = None,
+               master=None):
+    if master is not None:
+      tk.Toplevel.__init__(self, master)
+    else:
+      tk.Tk.__init__(self)
 
     self.geometry("1050x960")
     self.configure(bg=BG)
