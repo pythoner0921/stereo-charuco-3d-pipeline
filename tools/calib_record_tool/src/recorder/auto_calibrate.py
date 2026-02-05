@@ -650,35 +650,78 @@ def _save_project_settings(project_dir: Path):
     logger.info(f"Created project settings at {settings_path}")
 
 
-def _filter_xyz_outliers(csv_path: Path, abs_limit: float = 20.0) -> tuple[int, int]:
-  """Remove physically impossible 3D points from a triangulated xyz CSV.
+def _filter_xyz_outliers(
+  csv_path: Path,
+  abs_limit: float = 10.0,
+  iqr_k: float = 2.0,
+  max_displacement: float = 0.5,
+) -> tuple[int, int]:
+  """Remove outlier 3D points using multi-stage filtering.
 
-  Only removes:
-    1. Rows with inf / NaN coordinates
-    2. Points with any coordinate beyond ±abs_limit meters (default 20m)
+  Stages:
+    1. Drop rows with inf / NaN coordinates
+    2. Absolute range clip (±abs_limit meters, default 10m)
+    3. Per-keypoint IQR filtering — for each point_id, remove rows where
+       any coordinate is outside [Q1 - k*IQR, Q3 + k*IQR]
+    4. Velocity filtering — remove rows where a keypoint jumps more than
+       max_displacement meters between consecutive frames
 
-  No statistical filtering (IQR) — legitimate body landmarks are never removed.
   The file is overwritten in-place; returns (n_before, n_after).
   """
   import pandas as pd
 
   df = pd.read_csv(csv_path)
   n_before = len(df)
-
   coord_cols = ["x_coord", "y_coord", "z_coord"]
 
   # 1. Drop inf / NaN
   for col in coord_cols:
     df = df[np.isfinite(df[col])]
 
-  # 2. Absolute range clip — no room-scale point should be beyond ±20m
+  # 2. Absolute range clip
   for col in coord_cols:
     df = df[(df[col] >= -abs_limit) & (df[col] <= abs_limit)]
+
+  # 3. Per-keypoint IQR filtering
+  keep_mask = np.ones(len(df), dtype=bool)
+  for pid, grp in df.groupby("point_id"):
+    for col in coord_cols:
+      vals = grp[col]
+      q1 = vals.quantile(0.25)
+      q3 = vals.quantile(0.75)
+      iqr = q3 - q1
+      lo = q1 - iqr_k * iqr
+      hi = q3 + iqr_k * iqr
+      outlier_idx = grp.index[(vals < lo) | (vals > hi)]
+      keep_mask[df.index.get_indexer(outlier_idx)] = False
+
+  n_iqr_removed = (~keep_mask).sum()
+  if n_iqr_removed > 0:
+    logger.info(f"IQR filter: removed {n_iqr_removed} outlier points")
+  df = df[keep_mask]
+
+  # 4. Velocity filtering — remove points with impossible frame-to-frame jumps
+  df = df.sort_values(["point_id", "sync_index"]).reset_index(drop=True)
+  keep_mask = np.ones(len(df), dtype=bool)
+  for pid, grp in df.groupby("point_id"):
+    if len(grp) < 2:
+      continue
+    coords = grp[coord_cols].values  # (N, 3)
+    diffs = np.sqrt(np.sum(np.diff(coords, axis=0) ** 2, axis=1))
+    # Mark frames where incoming displacement is too large
+    bad_idx = grp.index[1:][diffs > max_displacement]
+    keep_mask[df.index.get_indexer(bad_idx)] = False
+
+  n_vel_removed = (~keep_mask).sum()
+  if n_vel_removed > 0:
+    logger.info(f"Velocity filter: removed {n_vel_removed} jump points "
+                f"(threshold={max_displacement}m)")
+  df = df[keep_mask]
 
   n_after = len(df)
   removed = n_before - n_after
   if removed > 0:
-    logger.info(f"Outlier filter: removed {removed} of {n_before} points "
+    logger.info(f"Outlier filter total: removed {removed} of {n_before} points "
                 f"({removed / max(n_before, 1) * 100:.1f}%)")
 
   df.to_csv(csv_path, index=False)

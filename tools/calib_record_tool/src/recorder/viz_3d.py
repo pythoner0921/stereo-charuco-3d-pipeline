@@ -200,10 +200,51 @@ def load_wireframe_for_tracker(tracker_name: str) -> list[WireSegment]:
       pass
 
   if toml_path is None:
-    logger.info(f"No wireframe TOML for tracker '{tracker_name}', using points only")
+    logger.info(f"No wireframe TOML for tracker '{tracker_name}', trying built-in fallback")
+    return _builtin_wireframe(tracker_name)
+
+  segments = _parse_wireframe_toml(toml_path)
+  if not segments:
+    logger.info("TOML parse returned no segments, trying built-in fallback")
+    return _builtin_wireframe(tracker_name)
+  return segments
+
+
+def _builtin_wireframe(tracker_name: str) -> list[WireSegment]:
+  """Return hardcoded wireframe segments for known trackers."""
+  if tracker_name.upper() != "YOLOV8_POSE":
     return []
 
-  return _parse_wireframe_toml(toml_path)
+  C = (0.2, 0.9, 0.9)  # cyan  — face
+  Y = (0.9, 0.9, 0.2)  # yellow — torso
+  R = (1.0, 0.2, 0.2)  # red   — left side
+  B = (0.2, 0.4, 1.0)  # blue  — right side
+
+  return [
+    # Face
+    WireSegment("nose_left_eye",        0,  1, C),
+    WireSegment("nose_right_eye",       0,  2, C),
+    WireSegment("left_eye_left_ear",    1,  3, C),
+    WireSegment("right_eye_right_ear",  2,  4, C),
+    # Shoulders
+    WireSegment("shoulders",            5,  6, Y),
+    # Left arm
+    WireSegment("left_upper_arm",       5,  7, R),
+    WireSegment("left_forearm",         7,  9, R),
+    # Right arm
+    WireSegment("right_upper_arm",      6,  8, B),
+    WireSegment("right_forearm",        8, 10, B),
+    # Torso
+    WireSegment("left_torso",           5, 11, Y),
+    WireSegment("right_torso",          6, 12, Y),
+    WireSegment("hips",                11, 12, Y),
+    # Left leg
+    WireSegment("left_thigh",          11, 13, R),
+    WireSegment("left_shin",           13, 15, R),
+    # Right leg
+    WireSegment("right_thigh",         12, 14, B),
+    WireSegment("right_shin",          14, 16, B),
+  ]
 
 
 def _parse_wireframe_toml(toml_path: Path) -> list[WireSegment]:
