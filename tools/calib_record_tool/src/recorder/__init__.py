@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-# ── Check caliscope dependency early with a clear message ──
+# ── Check dependencies early with clear messages ──
 try:
     import caliscope.core  # noqa: F401
 except ImportError:
@@ -13,6 +13,16 @@ except ImportError:
         "Install the pinned version:\n\n"
         "  pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e\n\n"
         "PyPI caliscope is outdated — you must install from GitHub.\n"
+    )
+
+import cv2
+if not hasattr(cv2, "aruco"):
+    raise ImportError(
+        "\n\ncv2.aruco module is missing.\n"
+        "This happens because ultralytics installs opencv-python (no aruco).\n"
+        "Fix:\n\n"
+        "  pip uninstall opencv-python opencv-python-headless -y\n"
+        "  pip install opencv-contrib-python>=4.8.0.74\n"
     )
 
 from .config import RecorderConfig
