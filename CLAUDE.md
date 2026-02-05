@@ -39,11 +39,11 @@
 
 <!-- CUSTOM:START -->
 ## Additional Notes
-The project environment is activated via `conda activate caliscope311`. All development and execution must be performed within the caliscope311 environment.
+The project environment is activated via `conda activate stereo-pipeline`. All development and execution must be performed within the stereo-pipeline environment.
 
 ### Launcher Commands
 ```bash
-conda activate caliscope311
+conda activate stereo-pipeline
 python scripts/run_unified.py              # Full workflow (recommended)
 python scripts/run_pipeline_ui.py          # Pipeline UI only (standalone)
 python scripts/run_calibration_ui.py       # Calibration UI only (standalone)

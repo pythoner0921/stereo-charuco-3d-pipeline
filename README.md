@@ -22,12 +22,15 @@ Stereo camera 3D motion capture pipeline with auto-calibration. Uses a dual-came
 
 ## Installation
 
+> **Python version**: Must be 3.10, 3.11, or 3.12. Python 3.13+ is **NOT supported**
+> (caliscope requires `<3.13`). Always specify `python=3.11` when creating the environment.
+
 ### Method 1: pip install (recommended for users)
 
 ```bash
-# 1. Create conda environment
-conda create -n caliscope311 python=3.11 pip ffmpeg -c conda-forge -y
-conda activate caliscope311
+# 1. Create conda environment (Python 3.11 required — 3.13 will NOT work)
+conda create -n stereo-pipeline python=3.11 pip ffmpeg -c conda-forge -y
+conda activate stereo-pipeline
 
 # 2. Install caliscope (must be from GitHub, not PyPI)
 pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e
@@ -52,8 +55,8 @@ git clone https://github.com/pythoner0921/stereo-charuco-3d-pipeline.git
 cd stereo-charuco-3d-pipeline
 
 # 2. Create environment
-conda create -n caliscope311 python=3.11 pip ffmpeg -c conda-forge -y
-conda activate caliscope311
+conda create -n stereo-pipeline python=3.11 pip ffmpeg -c conda-forge -y
+conda activate stereo-pipeline
 
 # 3. Install caliscope
 pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e
@@ -71,7 +74,7 @@ pip install opencv-contrib-python>=4.8.0.74
 
 ```bash
 conda env create -f environment.yml
-conda activate caliscope311
+conda activate stereo-pipeline
 
 # Fix OpenCV conflict after environment creation
 pip uninstall opencv-python opencv-python-headless -y
@@ -96,7 +99,7 @@ After installation, three commands are available:
 | `stereo-record` | Pipeline UI only (record + reconstruct) |
 
 ```bash
-conda activate caliscope311
+conda activate stereo-pipeline
 
 # Full workflow (recommended)
 stereo-pipeline
@@ -117,7 +120,7 @@ stereo-record --project-dir D:\my_projects\project_001
 ### Running from source (clone method)
 
 ```bash
-conda activate caliscope311
+conda activate stereo-pipeline
 cd tools/calib_record_tool
 
 python scripts/run_unified.py              # Full workflow
@@ -234,6 +237,16 @@ project_YYYYMMDD_HHMMSS/
 ---
 
 ## Troubleshooting
+
+### `requires a different Python: 3.13 not in '<3.13,>=3.10'`
+
+You created the environment with Python 3.13, which is not supported.
+Recreate with Python 3.11:
+```bash
+conda deactivate
+conda remove -n stereo-pipeline --all -y
+conda create -n stereo-pipeline python=3.11 pip ffmpeg -c conda-forge -y
+```
 
 ### `No module named 'caliscope.core'`
 

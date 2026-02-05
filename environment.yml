@@ -1,4 +1,4 @@
-name: caliscope311
+name: stereo-pipeline
 channels:
   - conda-forge
   - defaults
