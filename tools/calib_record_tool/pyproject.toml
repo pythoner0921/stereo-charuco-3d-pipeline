@@ -1,12 +1,11 @@
 [project]
 name = "stereo-charuco-pipeline"
-version = "0.3.0"
+version = "0.3.2"
 description = "Stereo ChArUco 3D motion capture pipeline with auto-calibration"
 requires-python = ">=3.10,<3.13"
 
 dependencies = [
     "pyyaml>=6.0",
-    "opencv-contrib-python>=4.8.0.74",
     "Pillow>=10.0.0",
     "matplotlib>=3.7.0",
     "scipy>=1.10.1",
@@ -21,6 +20,11 @@ dependencies = [
     "platformdirs>=4.3.8",
     "av>=16.0.0,<16.1.0",
     "ultralytics>=8.0.0",
+    # opencv-contrib-python MUST be installed AFTER ultralytics.
+    # ultralytics pulls in opencv-python which lacks cv2.aruco.
+    # Fix: pip uninstall opencv-python opencv-python-headless -y
+    #      pip install opencv-contrib-python>=4.8.0.74
+    "opencv-contrib-python>=4.8.0.74",
 ]
 
 [project.urls]

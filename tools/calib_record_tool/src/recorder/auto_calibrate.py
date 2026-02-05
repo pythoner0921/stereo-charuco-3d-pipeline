@@ -67,7 +67,7 @@ class AutoCalibConfig:
   image_size: tuple[int, int] = (1600, 1200)
   # Processing parameters
   intrinsic_subsample: int = 10  # process every Nth frame for intrinsic
-  extrinsic_subsample: int = 6   # process every Nth sync index for extrinsic
+  extrinsic_subsample: int = 12  # process every Nth sync index for extrinsic
 
   @classmethod
   def from_yaml(cls, yaml_data: dict, project_dir: Path) -> "AutoCalibConfig":
@@ -570,7 +570,7 @@ def run_auto_calibration(
     _emit(on_progress, "extrinsic_3d", "Running bundle adjustment (first pass)...", 70)
 
     bundle = PointDataBundle(camera_array, image_points, world_points)
-    optimized = bundle.optimize(ftol=1e-8, verbose=0)
+    optimized = bundle.optimize(ftol=1e-4, verbose=2)
 
     initial_cost = optimized.optimization_status.final_cost if optimized.optimization_status else 0.0
     _emit(on_progress, "extrinsic_3d",
@@ -580,7 +580,7 @@ def run_auto_calibration(
     _emit(on_progress, "extrinsic_3d", "Filtering outliers and re-optimizing...", 78)
 
     filtered = optimized.filter_by_percentile_error(FILTERED_FRACTION * 100)
-    final_bundle = filtered.optimize(ftol=1e-8, verbose=0)
+    final_bundle = filtered.optimize(ftol=1e-4, verbose=2)
 
     final_cost = final_bundle.optimization_status.final_cost if final_bundle.optimization_status else 0.0
     _emit(on_progress, "extrinsic_3d",
@@ -702,6 +702,7 @@ def run_auto_reconstruction(
   project_dir: Path,
   recording_name: str,
   tracker_name: str = "HOLISTIC",
+  fps_target: int = 20,
   on_progress: Optional[ProgressCallback] = None,
 ) -> Path:
   """Run 3D reconstruction on a recording session.
@@ -710,6 +711,7 @@ def run_auto_reconstruction(
     project_dir: Path to caliscope project directory
     recording_name: Name of recording subdirectory under recordings/
     tracker_name: Tracker to use (HOLISTIC, POSE, HAND, etc.)
+    fps_target: Target FPS for 2D landmark detection (lower = faster)
     on_progress: Optional callback for progress updates
 
   Returns:
@@ -740,7 +742,7 @@ def run_auto_reconstruction(
   reconstructor = Reconstructor(camera_array, recording_path, tracker_enum)
 
   # Stage 1: 2D detection
-  completed = reconstructor.create_xy(include_video=False)
+  completed = reconstructor.create_xy(include_video=False, fps_target=fps_target)
   if not completed:
     raise RuntimeError("2D landmark detection was cancelled or failed")
 

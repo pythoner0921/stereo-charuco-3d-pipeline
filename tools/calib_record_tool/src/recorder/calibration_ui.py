@@ -343,9 +343,8 @@ class PostProcessor:
         """
         Run the full post-processing pipeline.
 
-        1. Convert AVI to MP4
-        2. Split into left/right
-        3. Copy port_1.mp4 / port_2.mp4 to each output directory
+        Crops AVI directly into left/right MP4 files in parallel
+        (no intermediate full-frame MP4).
 
         Parameters
         ----------
@@ -362,32 +361,8 @@ class PostProcessor:
 
         ffmpeg = self._resolve_ffmpeg()
 
-        raw_mp4 = self.session_dir / "raw.mp4"
-        left_mp4 = self.session_dir / "left.mp4"
-        right_mp4 = self.session_dir / "right.mp4"
-
         preset = self.config.preset
         crf = str(self.config.crf)
-
-        # Step 1: Convert AVI to MP4
-        self._log("[STEP 1] Converting AVI to MP4...")
-        cmd_convert = [
-            ffmpeg, "-hide_banner", "-y",
-            "-i", str(raw_avi),
-            "-c:v", "libx264", "-preset", preset, "-crf", crf,
-            "-pix_fmt", "yuv420p",
-            str(raw_mp4)
-        ]
-
-        result = subprocess.run(cmd_convert, capture_output=True, text=True)
-        if result.returncode != 0:
-            self._log(f"[ERROR] Convert failed: {result.stderr}")
-            return False
-        self._log("[STEP 1] Conversion complete.")
-
-        # Step 2: Split into left/right
-        self._log("[STEP 2] Splitting into left/right videos...")
-
         xsplit = self.config.xsplit
         full_w = self.config.full_w
         full_h = self.config.full_h
@@ -395,51 +370,64 @@ class PostProcessor:
         left_crop = f"crop={xsplit}:{full_h}:0:0"
         right_crop = f"crop={full_w - xsplit}:{full_h}:{xsplit}:0"
 
-        # Left video
+        # Ensure output directories exist
+        for out_dir in output_dirs:
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Use first output dir for primary encoding; copy to others after
+        primary_dir = output_dirs[0]
+        port1_path = primary_dir / "port_1.mp4"
+        port2_path = primary_dir / "port_2.mp4"
+
+        # Step 1: Crop left + right from AVI in parallel
+        self._log("[STEP 1] Splitting AVI into left/right MP4 (parallel)...")
+
         cmd_left = [
             ffmpeg, "-hide_banner", "-y",
-            "-i", str(raw_mp4),
+            "-i", str(raw_avi),
             "-vf", left_crop,
             "-c:v", "libx264", "-preset", preset, "-crf", crf,
             "-pix_fmt", "yuv420p",
-            str(left_mp4)
+            str(port1_path),
         ]
-
-        result = subprocess.run(cmd_left, capture_output=True, text=True)
-        if result.returncode != 0:
-            self._log(f"[ERROR] Left split failed: {result.stderr}")
-            return False
-
-        # Right video
         cmd_right = [
             ffmpeg, "-hide_banner", "-y",
-            "-i", str(raw_mp4),
+            "-i", str(raw_avi),
             "-vf", right_crop,
             "-c:v", "libx264", "-preset", preset, "-crf", crf,
             "-pix_fmt", "yuv420p",
-            str(right_mp4)
+            str(port2_path),
         ]
 
-        result = subprocess.run(cmd_right, capture_output=True, text=True)
-        if result.returncode != 0:
-            self._log(f"[ERROR] Right split failed: {result.stderr}")
+        proc_left = subprocess.Popen(cmd_left, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc_right = subprocess.Popen(cmd_right, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        _, stderr_left = proc_left.communicate()
+        _, stderr_right = proc_right.communicate()
+
+        if proc_left.returncode != 0:
+            self._log(f"[ERROR] Left split failed: {stderr_left.decode(errors='replace')}")
+            return False
+        if proc_right.returncode != 0:
+            self._log(f"[ERROR] Right split failed: {stderr_right.decode(errors='replace')}")
             return False
 
-        self._log("[STEP 2] Split complete.")
+        self._log("[STEP 1] Split complete.")
+        self._log(f"  → {port1_path}")
+        self._log(f"  → {port2_path}")
 
-        # Step 3: Copy port_1.mp4 / port_2.mp4 to ALL output directories
-        self._log("[STEP 3] Copying to output directories...")
+        # Step 2: Copy to additional output directories (if any)
+        if len(output_dirs) > 1:
+            self._log("[STEP 2] Copying to additional output directories...")
+            for out_dir in output_dirs[1:]:
+                shutil.copy2(port1_path, out_dir / "port_1.mp4")
+                shutil.copy2(port2_path, out_dir / "port_2.mp4")
+                self._log(f"  → {out_dir / 'port_1.mp4'}")
+                self._log(f"  → {out_dir / 'port_2.mp4'}")
 
-        for out_dir in output_dirs:
-            out_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(left_mp4, out_dir / "port_1.mp4")
-            shutil.copy2(right_mp4, out_dir / "port_2.mp4")
-            self._log(f"  → {out_dir / 'port_1.mp4'}")
-            self._log(f"  → {out_dir / 'port_2.mp4'}")
+        self._log("[DONE] Post-processing complete.")
 
-        self._log("[DONE] All copies complete.")
-
-        # Cleanup intermediate files if not keeping AVI
+        # Cleanup AVI if not keeping
         if not self.config.keep_avi:
             try:
                 raw_avi.unlink()

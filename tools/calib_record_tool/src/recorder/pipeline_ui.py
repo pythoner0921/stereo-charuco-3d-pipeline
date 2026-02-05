@@ -578,8 +578,25 @@ class PipelineUI(tk.Tk):
     self._tracker_combo.pack(side=tk.LEFT, padx=5)
     self._load_tracker_options()
 
+    # FPS selection row
+    fps_row = tk.Frame(recon_inner, bg=BG_PANEL)
+    fps_row.pack(fill=tk.X, pady=(6, 0))
+
+    tk.Label(
+      fps_row, text="FPS:",
+      font=("Segoe UI", 10), fg=FG, bg=BG_PANEL,
+    ).pack(side=tk.LEFT)
+
+    self.var_recon_fps = tk.StringVar(value="20")
+    self._fps_combo = ttk.Combobox(
+      fps_row, textvariable=self.var_recon_fps,
+      state="readonly", width=6,
+      values=["10", "15", "20", "30", "60"],
+    )
+    self._fps_combo.pack(side=tk.LEFT, padx=5)
+
     self.btn_reconstruct = tk.Button(
-      tracker_row, text="Reconstruct 3D",
+      fps_row, text="Reconstruct 3D",
       font=("Segoe UI", 10, "bold"),
       bg=ACCENT_ORANGE, fg="white", activebackground="#E65100",
       relief="flat", padx=15, pady=4,
@@ -1349,6 +1366,7 @@ class PipelineUI(tk.Tk):
         self._project_dir,
         recording_name,
         tracker_name=self.var_tracker.get(),
+        fps_target=int(self.var_recon_fps.get()),
         on_progress=on_progress,
       )
 
