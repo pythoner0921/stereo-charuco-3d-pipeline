@@ -49,6 +49,62 @@ ProgressCallback = Callable[[str, str, int], None]
 FILTERED_FRACTION = 0.025  # 2.5% outlier removal
 
 
+def _patch_caliscope_for_avi() -> None:
+  """Enable caliscope to read port_*.avi when port_*.mp4 is missing.
+
+  Keeps MP4 priority so UI workflows are unaffected.
+  """
+  try:
+    import caliscope.managers.synchronized_stream_manager as ssm
+    import caliscope.recording.frame_source as fs
+  except Exception as exc:
+    logger.warning("AVI patch skipped (caliscope import failed): %s", exc)
+    return
+
+  if getattr(ssm, "_avi_patch_applied", False):
+    return
+
+  if hasattr(ssm, "read_video_properties"):
+    _orig_rvp = ssm.read_video_properties
+
+    def _read_video_properties_avi_fallback(source_path):
+      p = Path(str(source_path))
+      if p.suffix.lower() == ".mp4":
+        alt = p.with_suffix(".avi")
+        if alt.exists():
+          source_path = alt
+      return _orig_rvp(source_path)
+
+    ssm.read_video_properties = _read_video_properties_avi_fallback
+
+  if hasattr(fs, "FrameSource"):
+    _orig_init = fs.FrameSource.__init__
+
+    def _init_avi_fallback(self, video_directory: Path, port: int) -> None:
+      video_directory = Path(video_directory)
+      avi_path = video_directory / f"port_{port}.avi"
+      mp4_path = video_directory / f"port_{port}.mp4"
+      if avi_path.exists():
+        self.video_path = avi_path
+      elif mp4_path.exists():
+        self.video_path = mp4_path
+      else:
+        raise FileNotFoundError(f"Video file not found: {avi_path} or {mp4_path}")
+
+      # Call original init; if it insists on mp4, re-run with mp4 then restore.
+      orig_path = getattr(self, "video_path", None)
+      try:
+        return _orig_init(self, video_directory, port)
+      except FileNotFoundError:
+        self.video_path = mp4_path
+        _orig_init(self, video_directory, port)
+        self.video_path = orig_path
+
+    fs.FrameSource.__init__ = _init_avi_fallback
+
+  ssm._avi_patch_applied = True
+
+
 @dataclass
 class AutoCalibConfig:
   """Configuration for headless auto-calibration pipeline."""
@@ -766,6 +822,9 @@ def run_auto_reconstruction(
   """
   from caliscope.persistence import load_camera_array
   from caliscope.reconstruction.reconstructor import Reconstructor
+
+  # Allow AVI recordings (port_*.avi) without breaking existing MP4 workflows.
+  _patch_caliscope_for_avi()
 
   _emit(on_progress, "reconstruction", "Loading calibration data...", 0)
 
