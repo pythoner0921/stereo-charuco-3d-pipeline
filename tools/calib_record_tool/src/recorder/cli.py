@@ -16,7 +16,6 @@ from .paths import resolve_default_config
 
 def main():
     """Full workflow: Project Manager -> Calibration UI -> Pipeline UI."""
-    import tkinter as tk
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
     parser = argparse.ArgumentParser(description="Unified Stereo Pipeline")
@@ -33,21 +32,15 @@ def main():
     config_path = _resolve_config(args.config)
     projects_base = Path(args.projects_base) if args.projects_base else Path.cwd() / "projects"
 
-    # Create a single persistent Tk root to avoid Windows crash caused by
-    # creating/destroying multiple tk.Tk() instances sequentially.
-    root = tk.Tk()
-    root.withdraw()
-
     # Stage 1: Project Manager
     from .project_manager import ProjectManagerUI
 
-    pm = ProjectManagerUI(projects_base, master=root)
-    root.wait_window(pm)
+    pm = ProjectManagerUI(projects_base)
+    pm.wait_window(pm)
 
     context = pm.result
     if context is None:
         print("No project selected. Exiting.")
-        root.destroy()
         return
 
     print(f"Project: {context.project_dir}")
@@ -63,9 +56,8 @@ def main():
             config_path=config_path,
             project_dir=context.project_dir,
             on_complete=lambda: None,
-            master=root,
         )
-        root.wait_window(calib_app)
+        calib_app.wait_window(calib_app)
 
     # Stage 3: Pipeline UI
     print("\nOpening Pipeline UI...")
@@ -74,12 +66,10 @@ def main():
     pipeline_app = PipelineUI(
         config_path=config_path,
         project_dir=context.project_dir,
-        master=root,
     )
-    root.wait_window(pipeline_app)
+    pipeline_app.wait_window(pipeline_app)
 
     print("\nPipeline closed.")
-    root.destroy()
 
 
 def calibrate_only():
