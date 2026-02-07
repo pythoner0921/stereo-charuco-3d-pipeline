@@ -581,7 +581,6 @@ class PipelineUI(tk.Tk):
     )
     self._tracker_combo.pack(side=tk.LEFT, padx=5)
     self._tracker_combo.bind("<<ComboboxSelected>>", self._on_tracker_changed)
-    self._load_tracker_options()
 
     # YOLO model size selection row (visible only for YOLOV8_POSE)
     self._model_row = tk.Frame(recon_inner, bg=BG_PANEL)
@@ -618,6 +617,9 @@ class PipelineUI(tk.Tk):
     )
     self._imgsz_combo.pack(side=tk.LEFT, padx=5)
     self._imgsz_combo.current(1)
+
+    # Load tracker options after YOLO rows are created.
+    self._load_tracker_options()
 
     # FPS selection row
     fps_row = tk.Frame(recon_inner, bg=BG_PANEL)
