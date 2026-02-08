@@ -48,15 +48,17 @@ pip install stereo-charuco-pipeline[videopose3d]
 
 # 5. Fix dependency conflicts (required after every install/upgrade)
 pip install pyside6-essentials==6.8.1 shiboken6==6.8.1   # PySide6 6.10+ has DLL issues
-pip install --force-reinstall --no-cache-dir opencv-contrib-python>=4.8.0.74  # restore aruco
-pip install "numpy<2.4"                                    # numba requires numpy<2.4
+pip uninstall opencv-python opencv-python-headless -y      # remove ultralytics' opencv
+pip install --force-reinstall --no-deps --no-cache-dir opencv-contrib-python>=4.8.0.74  # restore aruco
+pip install --force-reinstall --no-deps "numpy<2.4"        # numba requires numpy<2.4
 ```
 
 > **Important**: Step 5 is required every time you install or upgrade.
 > These fixes resolve three known conflicts:
 > - `ultralytics` installs `opencv-python` which lacks `cv2.aruco`
 > - `PySide6 >= 6.10` causes DLL load failures on some Windows machines
-> - `opencv-contrib-python` reinstall may pull `numpy >= 2.4` which breaks `numba`
+> - `--no-deps` is critical: without it, reinstalling opencv pulls `numpy >= 2.4` which
+>   conflicts with conda-installed numpy (no RECORD file) and breaks the environment
 >
 > **Step 4 is optional**: Without torch, the pipeline works normally — it just
 > skips the VideoPose3D fusion step during reconstruction. ONNX acceleration
@@ -85,8 +87,9 @@ pip install -e ".[videopose3d]"
 
 # 6. Fix dependency conflicts
 pip install pyside6-essentials==6.8.1 shiboken6==6.8.1
-pip install --force-reinstall --no-cache-dir opencv-contrib-python>=4.8.0.74
-pip install "numpy<2.4"
+pip uninstall opencv-python opencv-python-headless -y
+pip install --force-reinstall --no-deps --no-cache-dir opencv-contrib-python>=4.8.0.74
+pip install --force-reinstall --no-deps "numpy<2.4"
 ```
 
 ### Conda environment.yml (alternative)
@@ -97,8 +100,9 @@ conda activate stereo-pipeline
 
 # Fix dependency conflicts after environment creation
 pip install pyside6-essentials==6.8.1 shiboken6==6.8.1
-pip install --force-reinstall --no-cache-dir opencv-contrib-python>=4.8.0.74
-pip install "numpy<2.4"
+pip uninstall opencv-python opencv-python-headless -y
+pip install --force-reinstall --no-deps --no-cache-dir opencv-contrib-python>=4.8.0.74
+pip install --force-reinstall --no-deps "numpy<2.4"
 ```
 
 > If `conda env create` fails with encoding errors on Japanese/Chinese Windows,
@@ -288,8 +292,17 @@ pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e
 ### `cv2` has no attribute `aruco`
 
 ```bash
-pip install --force-reinstall --no-cache-dir opencv-contrib-python>=4.8.0.74
-pip install "numpy<2.4"
+pip uninstall opencv-python opencv-python-headless -y
+pip install --force-reinstall --no-deps --no-cache-dir opencv-contrib-python>=4.8.0.74
+```
+
+### `error: uninstall-no-record-file` (numpy installed by conda)
+
+If `pip install --force-reinstall opencv-contrib-python` fails because it tries to
+uninstall conda-installed numpy, use `--no-deps`:
+```bash
+pip install --force-reinstall --no-deps --no-cache-dir opencv-contrib-python>=4.8.0.74
+pip install --force-reinstall --no-deps "numpy<2.4"
 ```
 
 ### PySide6 DLL load failed (`找不到指定的程序`)
@@ -299,10 +312,21 @@ Downgrade PySide6 to a compatible version:
 pip install pyside6-essentials==6.8.1 shiboken6==6.8.1
 ```
 
+### `No module named 'dateutil'` or `Unable to import required dependency`
+
+The environment's numpy was corrupted (usually by a `--force-reinstall` without `--no-deps`).
+Fix by reinstalling numpy and its dependents:
+```bash
+pip install --force-reinstall --no-deps "numpy<2.4"
+pip install python-dateutil
+pip uninstall opencv-python opencv-python-headless -y
+pip install --force-reinstall --no-deps --no-cache-dir opencv-contrib-python>=4.8.0.74
+```
+
 ### `Numba needs NumPy 2.3 or less`
 
 ```bash
-pip install "numpy<2.4"
+pip install --force-reinstall --no-deps "numpy<2.4"
 ```
 
 ### Bundle adjustment hangs / very slow
