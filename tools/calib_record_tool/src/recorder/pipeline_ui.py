@@ -30,7 +30,9 @@ except ImportError:
 
 try:
   import matplotlib
-  matplotlib.use("TkAgg")
+  matplotlib.use("Agg")  # Non-interactive backend; avoids "main thread is not in main loop"
+                          # when ultralytics imports matplotlib from a background thread.
+                          # FigureCanvasTkAgg works independently of the global backend.
   from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
   from matplotlib.figure import Figure
   from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
