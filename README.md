@@ -7,6 +7,10 @@ Stereo camera 3D motion capture pipeline with auto-calibration. Uses a dual-came
 - Auto-calibration using ChArUco board (intrinsic + extrinsic)
 - Manual and auto-monitor recording modes
 - Multiple pose trackers: MediaPipe (Holistic/Pose/Hand), YOLOv8-Pose
+- **ONNX Runtime acceleration** — auto-exports YOLO to ONNX, true parallel per-port inference (v0.5.0)
+- **Batch 2D detection** — bypasses caliscope's frame-by-frame streaming for ~3x speedup (v0.5.0)
+- **AVI fast-split** — MJPEG re-encode ~5-10x faster than H.264 for pipeline recordings (v0.5.0)
+- **VideoPose3D fusion** — optional monocular 3D lifting to fill occluded joints (v0.5.0, requires `torch`)
 - 3D triangulation via caliscope
 - Interactive 3D skeleton visualization with playback controls
 - Configurable reconstruction FPS (10/15/20/30/60)
@@ -38,17 +42,25 @@ pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e
 # 3. Install this pipeline
 pip install stereo-charuco-pipeline
 
-# 4. Fix dependency conflicts (required after every install/upgrade)
+# 4. (Optional) Install VideoPose3D support for monocular 3D fusion
+#    This improves accuracy on occluded joints. Skip if you don't need it.
+pip install stereo-charuco-pipeline[videopose3d]
+
+# 5. Fix dependency conflicts (required after every install/upgrade)
 pip install pyside6-essentials==6.8.1 shiboken6==6.8.1   # PySide6 6.10+ has DLL issues
 pip install --force-reinstall --no-cache-dir opencv-contrib-python>=4.8.0.74  # restore aruco
 pip install "numpy<2.4"                                    # numba requires numpy<2.4
 ```
 
-> **Important**: Step 4 is required every time you install or upgrade.
+> **Important**: Step 5 is required every time you install or upgrade.
 > These fixes resolve three known conflicts:
 > - `ultralytics` installs `opencv-python` which lacks `cv2.aruco`
 > - `PySide6 >= 6.10` causes DLL load failures on some Windows machines
 > - `opencv-contrib-python` reinstall may pull `numpy >= 2.4` which breaks `numba`
+>
+> **Step 4 is optional**: Without torch, the pipeline works normally — it just
+> skips the VideoPose3D fusion step during reconstruction. ONNX acceleration
+> and all other v0.5.0 optimizations work without torch.
 
 ### Method 2: Clone from GitHub (for development)
 
@@ -68,7 +80,10 @@ pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e
 cd tools/calib_record_tool
 pip install -e .
 
-# 5. Fix dependency conflicts
+# 5. (Optional) Install VideoPose3D support
+pip install -e ".[videopose3d]"
+
+# 6. Fix dependency conflicts
 pip install pyside6-essentials==6.8.1 shiboken6==6.8.1
 pip install --force-reinstall --no-cache-dir opencv-contrib-python>=4.8.0.74
 pip install "numpy<2.4"
@@ -153,7 +168,8 @@ Two recording modes:
 - **Manual**: Start/stop recording with buttons. Uses FFmpeg to capture stereo video.
 - **Auto Monitor**: Automatic recording triggered by person detection (HOG-based). Configurable detection interval, absence threshold, and cooldown.
 
-Post-processing splits the stereo AVI into left/right MP4 files (parallel FFmpeg encoding).
+Post-processing splits the stereo AVI into left/right video files (parallel FFmpeg encoding).
+Pipeline recordings use **AVI fast-split** (MJPEG, ~5-10x faster). Calibration recordings use MP4 (H.264, required for caliscope frame-accurate seeking).
 
 ### Panel 3: 3D Reconstruction
 
@@ -164,7 +180,10 @@ Post-processing splits the stereo AVI into left/right MP4 files (parallel FFmpeg
 - **FPS**: Target framerate for processing (default 10). Lower = faster processing.
   - 60fps recording at FPS=10 processes only 1/6 of frames (~6x speedup)
   - For normal human motion, 10-15fps is sufficient
+- **ONNX acceleration**: YOLOV8_POSE auto-exports to ONNX on first run, subsequent runs use cached model. ONNX Runtime releases the GIL, enabling true CPU parallelism across camera ports.
+- **Batch detection**: YOLOV8_POSE uses fast batch inference (bypasses caliscope streaming)
 - **Outlier filtering**: Per-keypoint IQR + velocity-based filtering removes triangulation drift
+- **VideoPose3D fusion** (optional, requires `torch`): After stereo triangulation, fuses monocular 3D predictions from VideoPose3D to fill occluded joints. Automatically skipped if torch is not installed.
 - Output: `xyz_{TRACKER}.csv` with 3D coordinates per frame
 
 ### Panel 4: 3D Visualization
@@ -216,20 +235,23 @@ Each project is organized as:
 project_YYYYMMDD_HHMMSS/
   calibration/
     intrinsic/
-      port_1.mp4            # Left camera calibration video
-      port_2.mp4            # Right camera calibration video
+      port_1.mp4            # Left camera calibration video (H.264)
+      port_2.mp4            # Right camera calibration video (H.264)
     extrinsic/
       port_1.mp4
       port_2.mp4
   recordings/
     session_YYYYMMDD_HHMMSS/
-      port_1.mp4            # Left camera recording
-      port_2.mp4            # Right camera recording
+      port_1.avi            # Left camera recording (MJPEG, v0.5.0+)
+      port_2.avi            # Right camera recording (MJPEG, v0.5.0+)
       YOLOV8_POSE/
         xy_YOLOV8_POSE.csv  # 2D landmarks
         xyz_YOLOV8_POSE.csv # 3D coordinates (output)
   camera_array.toml         # Calibration results
 ```
+
+> **Note**: v0.5.0+ pipeline recordings produce `.avi` files (MJPEG fast-split).
+> Existing projects with `.mp4` recordings are fully backward-compatible.
 
 ---
 
@@ -300,6 +322,7 @@ Set `chcp 65001` before running conda commands.
 
 | Version | Changes |
 |---------|---------|
+| 0.5.0 | ONNX Runtime acceleration, batch 2D detection, AVI fast-split (~5-10x faster post-processing), VideoPose3D fusion (optional torch), .avi/.mp4 interchangeable |
 | 0.4.0 | YOLO model/resolution UI controls, skeleton wireframe in 3D viz, IQR+velocity outlier filtering, fix multi-window crash |
 | 0.3.6 | Pin numpy<2.4, PySide6 >=6.5.0, startup checks for caliscope + aruco |
 | 0.3.3 | Pin caliscope to commit 8dc0cd4e, add missing-dependency error message |
