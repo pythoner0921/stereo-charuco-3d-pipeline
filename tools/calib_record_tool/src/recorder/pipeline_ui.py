@@ -876,7 +876,7 @@ class PipelineUI(tk.Tk):
         on_log=lambda msg: self._msg_queue.put(("log", msg)),
       )
 
-      success = processor.run_avi_fast(raw_avi, [recordings_dir])
+      success = processor.run(raw_avi, [recordings_dir])
 
       if success:
         # Generate frame_timestamps.csv for the recording
@@ -1071,7 +1071,7 @@ class PipelineUI(tk.Tk):
         on_log=lambda msg: self._msg_queue.put(("log", msg)),
       )
 
-      success = processor.run_avi_fast(raw_avi, [recordings_dir])
+      success = processor.run(raw_avi, [recordings_dir])
 
       if success:
         # Copy metadata.json if it exists

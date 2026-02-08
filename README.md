@@ -9,7 +9,7 @@ Stereo camera 3D motion capture pipeline with auto-calibration. Uses a dual-came
 - Multiple pose trackers: MediaPipe (Holistic/Pose/Hand), YOLOv8-Pose
 - **ONNX Runtime acceleration** — auto-exports YOLO to ONNX, true parallel per-port inference (v0.5.0)
 - **Batch 2D detection** — bypasses caliscope's frame-by-frame streaming for ~3x speedup (v0.5.0)
-- **AVI fast-split** — MJPEG re-encode ~5-10x faster than H.264 for pipeline recordings (v0.5.0)
+- **Parallel H.264 split** — stereo AVI → compact left/right MP4 (parallel FFmpeg encoding) (v0.5.0)
 - **VideoPose3D fusion** — optional monocular 3D lifting to fill occluded joints (v0.5.0, requires `torch`)
 - 3D triangulation via caliscope
 - Interactive 3D skeleton visualization with playback controls
@@ -172,8 +172,8 @@ Two recording modes:
 - **Manual**: Start/stop recording with buttons. Uses FFmpeg to capture stereo video.
 - **Auto Monitor**: Automatic recording triggered by person detection (HOG-based). Configurable detection interval, absence threshold, and cooldown.
 
-Post-processing splits the stereo AVI into left/right video files (parallel FFmpeg encoding).
-Pipeline recordings use **AVI fast-split** (MJPEG, ~5-10x faster). Calibration recordings use MP4 (H.264, required for caliscope frame-accurate seeking).
+Post-processing splits the stereo AVI into left/right MP4 files (parallel H.264 encoding).
+Output files are compact MP4 (H.264, CRF 18) — a 20-minute recording produces ~1.5-2 GB instead of ~13 GB with MJPEG.
 
 ### Panel 3: 3D Reconstruction
 
@@ -246,16 +246,16 @@ project_YYYYMMDD_HHMMSS/
       port_2.mp4
   recordings/
     session_YYYYMMDD_HHMMSS/
-      port_1.avi            # Left camera recording (MJPEG, v0.5.0+)
-      port_2.avi            # Right camera recording (MJPEG, v0.5.0+)
+      port_1.mp4            # Left camera recording (H.264)
+      port_2.mp4            # Right camera recording (H.264)
       YOLOV8_POSE/
         xy_YOLOV8_POSE.csv  # 2D landmarks
         xyz_YOLOV8_POSE.csv # 3D coordinates (output)
   camera_array.toml         # Calibration results
 ```
 
-> **Note**: v0.5.0+ pipeline recordings produce `.avi` files (MJPEG fast-split).
-> Existing projects with `.mp4` recordings are fully backward-compatible.
+> **Note**: Both `.mp4` and `.avi` recordings are supported. The pipeline
+> auto-detects the format when loading existing sessions.
 
 ---
 
@@ -346,7 +346,7 @@ Set `chcp 65001` before running conda commands.
 
 | Version | Changes |
 |---------|---------|
-| 0.5.0 | ONNX Runtime acceleration, batch 2D detection, AVI fast-split (~5-10x faster post-processing), VideoPose3D fusion (optional torch), .avi/.mp4 interchangeable |
+| 0.5.0 | ONNX Runtime acceleration, batch 2D detection, parallel H.264 split, VideoPose3D fusion (optional torch), .avi/.mp4 interchangeable |
 | 0.4.0 | YOLO model/resolution UI controls, skeleton wireframe in 3D viz, IQR+velocity outlier filtering, fix multi-window crash |
 | 0.3.6 | Pin numpy<2.4, PySide6 >=6.5.0, startup checks for caliscope + aruco |
 | 0.3.3 | Pin caliscope to commit 8dc0cd4e, add missing-dependency error message |
