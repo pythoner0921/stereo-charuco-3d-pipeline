@@ -211,8 +211,14 @@ class ProjectManagerUI(tk.Tk):
       if not has_calib and not has_rec and not d.name.startswith("project_"):
         return
       has_calib_videos = (
-        (d / "calibration" / "intrinsic" / "port_1.mp4").exists()
-        and (d / "calibration" / "intrinsic" / "port_2.mp4").exists()
+        (
+          (d / "calibration" / "intrinsic" / "port_1.mp4").exists()
+          or (d / "calibration" / "intrinsic" / "port_1.avi").exists()
+        )
+        and (
+          (d / "calibration" / "intrinsic" / "port_2.mp4").exists()
+          or (d / "calibration" / "intrinsic" / "port_2.avi").exists()
+        )
       )
       calibrated = (d / "camera_array.toml").exists()
       num_rec = 0

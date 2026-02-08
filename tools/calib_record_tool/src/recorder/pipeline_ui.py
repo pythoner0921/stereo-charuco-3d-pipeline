@@ -876,7 +876,7 @@ class PipelineUI(tk.Tk):
         on_log=lambda msg: self._msg_queue.put(("log", msg)),
       )
 
-      success = processor.run(raw_avi, [recordings_dir])
+      success = processor.run_avi_fast(raw_avi, [recordings_dir])
 
       if success:
         # Generate frame_timestamps.csv for the recording
@@ -1071,7 +1071,7 @@ class PipelineUI(tk.Tk):
         on_log=lambda msg: self._msg_queue.put(("log", msg)),
       )
 
-      success = processor.run(raw_avi, [recordings_dir])
+      success = processor.run_avi_fast(raw_avi, [recordings_dir])
 
       if success:
         # Copy metadata.json if it exists
@@ -1379,8 +1379,11 @@ class PipelineUI(tk.Tk):
     if rec_dir.exists():
       for d in sorted(rec_dir.iterdir()):
         if d.is_dir():
-          # Check if it has port_N.mp4 files
-          has_videos = (d / "port_1.mp4").exists() or (d / "port_2.mp4").exists()
+          # Check if it has port_N video files (.mp4 or .avi)
+          has_videos = (
+            (d / "port_1.mp4").exists() or (d / "port_2.mp4").exists()
+            or (d / "port_1.avi").exists() or (d / "port_2.avi").exists()
+          )
           if has_videos:
             recordings.append(d.name)
 

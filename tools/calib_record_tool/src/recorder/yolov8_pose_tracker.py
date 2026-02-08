@@ -13,6 +13,7 @@ from threading import Thread
 from queue import Queue, Full
 
 import numpy as np
+from platformdirs import user_cache_dir
 
 from caliscope.packets import PointPacket
 from caliscope.tracker import Tracker
@@ -45,6 +46,47 @@ COCO_POINT_NAMES = [
 MIN_CONFIDENCE = 0.3
 
 
+def _ensure_onnx_model(model_size: str, imgsz: int) -> Path:
+  """Export YOLOv8-pose .pt → .onnx if not already cached.
+
+  Returns the path to the cached .onnx file.
+  """
+  cache_dir = Path(user_cache_dir("stereo-pipeline", "stereo-pipeline")) / "onnx"
+  cache_dir.mkdir(parents=True, exist_ok=True)
+
+  onnx_name = f"yolov8{model_size}-pose_imgsz{imgsz}.onnx"
+  onnx_path = cache_dir / onnx_name
+
+  if onnx_path.exists():
+    logger.info(f"Using cached ONNX model: {onnx_path}")
+    return onnx_path
+
+  logger.info(f"Exporting YOLOv8{model_size}-pose to ONNX (imgsz={imgsz})...")
+  from ultralytics import YOLO
+  pt_model = YOLO(f"yolov8{model_size}-pose.pt")
+  pt_model.export(format="onnx", imgsz=imgsz, simplify=True)
+
+  # ultralytics exports next to the .pt file; move to our cache
+  exported = Path(f"yolov8{model_size}-pose.onnx")
+  if not exported.exists():
+    # Check in ultralytics default location
+    possible = Path(pt_model.ckpt_path).with_suffix(".onnx")
+    if possible.exists():
+      exported = possible
+
+  if exported.exists():
+    import shutil
+    shutil.move(str(exported), str(onnx_path))
+    logger.info(f"ONNX model cached: {onnx_path}")
+  else:
+    raise FileNotFoundError(
+      f"ONNX export succeeded but file not found. "
+      f"Looked for {exported}"
+    )
+
+  return onnx_path
+
+
 class YoloV8PoseTracker(Tracker):
   """YOLOv8-Pose tracker producing 17 COCO keypoints.
 
@@ -52,9 +94,11 @@ class YoloV8PoseTracker(Tracker):
   model instance, matching the pattern used by caliscope's PoseTracker.
   """
 
-  def __init__(self, model_size: str = "n", imgsz: int = 480) -> None:
+  def __init__(self, model_size: str = "n", imgsz: int = 480,
+               use_onnx: bool = True) -> None:
     self.model_size = model_size
     self.imgsz = imgsz
+    self.use_onnx = use_onnx
     self.in_queues: dict[int, Queue] = {}
     self.out_queues: dict[int, Queue] = {}
     self.threads: dict[int, Thread] = {}
@@ -132,8 +176,18 @@ class YoloV8PoseTracker(Tracker):
   def _worker_loop(self, port: int, rotation_count: int) -> None:
     from ultralytics import YOLO
 
-    model = YOLO(f"yolov8{self.model_size}-pose.pt")
-    logger.info(f"YOLOv8{self.model_size}-Pose model loaded for port {port} (imgsz={self.imgsz})")
+    if self.use_onnx:
+      try:
+        onnx_path = _ensure_onnx_model(self.model_size, self.imgsz)
+        model = YOLO(str(onnx_path), task="pose")
+        logger.info(f"YOLOv8{self.model_size}-Pose ONNX model loaded for port {port} (imgsz={self.imgsz})")
+      except Exception as e:
+        logger.warning(f"ONNX export failed, falling back to PyTorch: {e}")
+        model = YOLO(f"yolov8{self.model_size}-pose.pt")
+        logger.info(f"YOLOv8{self.model_size}-Pose PyTorch model loaded for port {port}")
+    else:
+      model = YOLO(f"yolov8{self.model_size}-pose.pt")
+      logger.info(f"YOLOv8{self.model_size}-Pose PyTorch model loaded for port {port} (imgsz={self.imgsz})")
 
     in_q = self.in_queues[port]
     out_q = self.out_queues[port]
@@ -165,8 +219,21 @@ class YoloV8PoseTracker(Tracker):
     if result.keypoints is None or result.keypoints.xy is None:
       return PointPacket(np.array([], dtype=np.int32), np.array([]).reshape(0, 2))
 
-    kpts_xy = result.keypoints.xy.cpu().numpy()    # (N_people, 17, 2)
-    kpts_conf = result.keypoints.conf.cpu().numpy() if result.keypoints.conf is not None else None  # (N_people, 17)
+    # Handle both PyTorch tensors (.cpu().numpy()) and numpy arrays (ONNX)
+    raw_xy = result.keypoints.xy
+    if hasattr(raw_xy, 'cpu'):
+      kpts_xy = raw_xy.cpu().numpy()
+    else:
+      kpts_xy = np.asarray(raw_xy)
+
+    raw_conf = result.keypoints.conf
+    if raw_conf is not None:
+      if hasattr(raw_conf, 'cpu'):
+        kpts_conf = raw_conf.cpu().numpy()
+      else:
+        kpts_conf = np.asarray(raw_conf)
+    else:
+      kpts_conf = None
 
     if kpts_xy.shape[0] == 0:
       return PointPacket(np.array([], dtype=np.int32), np.array([]).reshape(0, 2))

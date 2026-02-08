@@ -105,60 +105,15 @@ def _patch_caliscope_for_avi() -> None:
   ssm._avi_patch_applied = True
 
 
-def _patch_caliscope_for_avi() -> None:
-  """Enable caliscope to read port_*.avi when port_*.mp4 is missing.
-
-  Keeps MP4 priority so UI workflows are unaffected.
-  """
-  try:
-    import caliscope.managers.synchronized_stream_manager as ssm
-    import caliscope.recording.frame_source as fs
-  except Exception as exc:
-    logger.warning("AVI patch skipped (caliscope import failed): %s", exc)
-    return
-
-  if getattr(ssm, "_avi_patch_applied", False):
-    return
-
-  if hasattr(ssm, "read_video_properties"):
-    _orig_rvp = ssm.read_video_properties
-
-    def _read_video_properties_avi_fallback(source_path):
-      p = Path(str(source_path))
-      if p.suffix.lower() == ".mp4":
-        alt = p.with_suffix(".avi")
-        if alt.exists():
-          source_path = alt
-      return _orig_rvp(source_path)
-
-    ssm.read_video_properties = _read_video_properties_avi_fallback
-
-  if hasattr(fs, "FrameSource"):
-    _orig_init = fs.FrameSource.__init__
-
-    def _init_avi_fallback(self, video_directory: Path, port: int) -> None:
-      video_directory = Path(video_directory)
-      avi_path = video_directory / f"port_{port}.avi"
-      mp4_path = video_directory / f"port_{port}.mp4"
-      if avi_path.exists():
-        self.video_path = avi_path
-      elif mp4_path.exists():
-        self.video_path = mp4_path
-      else:
-        raise FileNotFoundError(f"Video file not found: {avi_path} or {mp4_path}")
-
-      # Call original init; if it insists on mp4, re-run with mp4 then restore.
-      orig_path = getattr(self, "video_path", None)
-      try:
-        return _orig_init(self, video_directory, port)
-      except FileNotFoundError:
-        self.video_path = mp4_path
-        _orig_init(self, video_directory, port)
-        self.video_path = orig_path
-
-    fs.FrameSource.__init__ = _init_avi_fallback
-
-  ssm._avi_patch_applied = True
+def _find_port_video(directory: Path, port: int) -> Path:
+  """Find port_N video file, trying .mp4 first then .avi."""
+  mp4 = directory / f"port_{port}.mp4"
+  if mp4.exists():
+    return mp4
+  avi = directory / f"port_{port}.avi"
+  if avi.exists():
+    return avi
+  raise FileNotFoundError(f"Video not found: {mp4} or {avi}")
 
 
 @dataclass
@@ -235,9 +190,7 @@ def _collect_charuco_points_from_video(
 
   Returns list of (frame_index, PointPacket) tuples.
   """
-  video_path = video_dir / f"port_{port}.mp4"
-  if not video_path.exists():
-    raise FileNotFoundError(f"Video file not found: {video_path}")
+  video_path = _find_port_video(video_dir, port)
 
   container = av.open(str(video_path))
   stream = container.streams.video[0]
@@ -412,9 +365,10 @@ def _process_extrinsic_sequential(
       needed = port_needed.get(port, set())
       if not needed:
         continue
-      video_path = recording_dir / f"port_{port}.mp4"
-      if not video_path.exists():
-        logger.warning(f"Video not found: {video_path}")
+      try:
+        video_path = _find_port_video(recording_dir, port)
+      except FileNotFoundError:
+        logger.warning(f"Video not found for port {port} in {recording_dir}")
         continue
 
       futures[port] = pool.submit(
@@ -577,9 +531,7 @@ def run_auto_calibration(
 
     # Verify all videos exist first
     for port in config.ports:
-      video_path = intrinsic_dir / f"port_{port}.mp4"
-      if not video_path.exists():
-        raise FileNotFoundError(f"Intrinsic video not found: {video_path}")
+      _find_port_video(intrinsic_dir, port)  # raises FileNotFoundError
 
     # Collect charuco points from ALL ports in parallel
     _emit(on_progress, "intrinsic",
@@ -589,7 +541,7 @@ def run_auto_calibration(
       """Thread worker: decode + detect charuco for one port."""
       # Each thread gets its own tracker (lightweight, just references charuco)
       t = CharucoTracker(charuco)
-      video_path = intrinsic_dir / f"port_{port}.mp4"
+      video_path = _find_port_video(intrinsic_dir, port)
       container = av.open(str(video_path))
       stream = container.streams.video[0]
       tb = float(stream.time_base)
@@ -882,13 +834,13 @@ def run_auto_reconstruction(
   # Allow AVI recordings (port_*.avi) without breaking existing MP4 workflows.
   _patch_caliscope_for_avi()
 
-  # Allow AVI recordings (port_*.avi) without breaking existing MP4 workflows.
-  _patch_caliscope_for_avi()
-
   _emit(on_progress, "reconstruction", "Loading calibration data...", 0)
 
   camera_array = load_camera_array(project_dir / "camera_array.toml")
   recording_path = project_dir / "recordings" / recording_name
+
+  if not recording_path.exists():
+    raise FileNotFoundError(f"Recording not found: {recording_path}")
 
   # Resolve tracker: use duck-type wrapper for custom trackers,
   # caliscope TrackerEnum for built-in ones.
@@ -901,21 +853,26 @@ def run_auto_reconstruction(
     from caliscope.trackers.tracker_enum import TrackerEnum
     tracker_enum = TrackerEnum[tracker_name]
 
-  if not recording_path.exists():
-    raise FileNotFoundError(f"Recording not found: {recording_path}")
-
   _emit(on_progress, "reconstruction", "Starting 2D landmark detection...", 5)
 
-  reconstructor = Reconstructor(camera_array, recording_path, tracker_enum)
-
-  # Stage 1: 2D detection
-  completed = reconstructor.create_xy(include_video=False, fps_target=fps_target)
-  if not completed:
-    raise RuntimeError("2D landmark detection was cancelled or failed")
+  # Stage 1: 2D detection — use fast batch ONNX path for YOLOV8_POSE
+  if tracker_name == "YOLOV8_POSE":
+    from .fast_detect import fast_create_xy
+    fast_create_xy(
+      recording_path, camera_array,
+      model_size=model_size, imgsz=imgsz,
+      fps_target=fps_target, batch_size=2,
+    )
+  else:
+    reconstructor = Reconstructor(camera_array, recording_path, tracker_enum)
+    completed = reconstructor.create_xy(include_video=False, fps_target=fps_target)
+    if not completed:
+      raise RuntimeError("2D landmark detection was cancelled or failed")
 
   _emit(on_progress, "reconstruction", "Starting 3D triangulation...", 80)
 
-  # Stage 2: 3D triangulation
+  # Stage 2: 3D triangulation — reconstructor reads xy CSV regardless of path
+  reconstructor = Reconstructor(camera_array, recording_path, tracker_enum)
   reconstructor.create_xyz()
 
   output_path = recording_path / tracker_enum.name / f"xyz_{tracker_enum.name}.csv"
@@ -925,6 +882,19 @@ def run_auto_reconstruction(
   n_before, n_after = _filter_xyz_outliers(output_path)
   _emit(on_progress, "reconstruction",
         f"Filtered {n_before - n_after} outlier points ({n_before} -> {n_after})", 95)
+
+  # Stage 4: VideoPose3D monocular fusion (optional, requires torch)
+  if tracker_name == "YOLOV8_POSE":
+    try:
+      from .videopose3d_lifter import fuse_stereo_and_monocular
+      xy_csv_path = recording_path / tracker_enum.name / f"xy_{tracker_enum.name}.csv"
+      _emit(on_progress, "reconstruction", "Running VideoPose3D fusion...", 96)
+      fuse_stereo_and_monocular(output_path, xy_csv_path, port=1)
+      _emit(on_progress, "reconstruction", "VideoPose3D fusion complete", 98)
+    except ImportError:
+      logger.info("torch not installed, skipping VideoPose3D fusion")
+    except Exception as e:
+      logger.warning(f"VideoPose3D fusion failed: {e}")
 
   _emit(on_progress, "reconstruction", f"Reconstruction complete: {output_path}", 100)
 

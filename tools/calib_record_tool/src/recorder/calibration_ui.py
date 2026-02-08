@@ -437,6 +437,94 @@ class PostProcessor:
 
         return True
 
+    def run_avi_fast(self, raw_avi: Path, output_dirs) -> bool:
+        """Fast AVI split using MJPEG re-encode (~5-10x faster than H.264).
+
+        Produces port_1.avi / port_2.avi instead of .mp4.
+        Use this for pipeline recordings where H.264 seeking is not needed.
+
+        Parameters
+        ----------
+        raw_avi : Path
+            Input raw AVI file.
+        output_dirs : Path or list[Path]
+            One or more directories to receive port_1.avi / port_2.avi.
+        """
+        if isinstance(output_dirs, (str, Path)):
+            output_dirs = [Path(output_dirs)]
+        else:
+            output_dirs = [Path(d) for d in output_dirs]
+
+        ffmpeg = self._resolve_ffmpeg()
+
+        xsplit = self.config.xsplit
+        full_w = self.config.full_w
+        full_h = self.config.full_h
+
+        left_crop = f"crop={xsplit}:{full_h}:0:0"
+        right_crop = f"crop={full_w - xsplit}:{full_h}:{xsplit}:0"
+
+        for out_dir in output_dirs:
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+        primary_dir = output_dirs[0]
+        port1_path = primary_dir / "port_1.avi"
+        port2_path = primary_dir / "port_2.avi"
+
+        self._log("[STEP 1] Splitting AVI into left/right AVI (MJPEG, parallel)...")
+
+        cmd_left = [
+            ffmpeg, "-hide_banner", "-y",
+            "-i", str(raw_avi),
+            "-vf", left_crop,
+            "-c:v", "mjpeg", "-q:v", "2",
+            str(port1_path),
+        ]
+        cmd_right = [
+            ffmpeg, "-hide_banner", "-y",
+            "-i", str(raw_avi),
+            "-vf", right_crop,
+            "-c:v", "mjpeg", "-q:v", "2",
+            str(port2_path),
+        ]
+
+        proc_left = subprocess.Popen(cmd_left, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc_right = subprocess.Popen(cmd_right, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        _, stderr_left = proc_left.communicate()
+        _, stderr_right = proc_right.communicate()
+
+        if proc_left.returncode != 0:
+            self._log(f"[ERROR] Left split failed: {stderr_left.decode(errors='replace')}")
+            return False
+        if proc_right.returncode != 0:
+            self._log(f"[ERROR] Right split failed: {stderr_right.decode(errors='replace')}")
+            return False
+
+        self._log("[STEP 1] AVI split complete.")
+        self._log(f"  -> {port1_path}")
+        self._log(f"  -> {port2_path}")
+
+        if len(output_dirs) > 1:
+            self._log("[STEP 2] Copying to additional output directories...")
+            for out_dir in output_dirs[1:]:
+                import shutil
+                shutil.copy2(port1_path, out_dir / "port_1.avi")
+                shutil.copy2(port2_path, out_dir / "port_2.avi")
+                self._log(f"  -> {out_dir / 'port_1.avi'}")
+                self._log(f"  -> {out_dir / 'port_2.avi'}")
+
+        self._log("[DONE] Post-processing complete (AVI fast path).")
+
+        if not self.config.keep_avi:
+            try:
+                raw_avi.unlink()
+                self._log(f"[CLEANUP] Deleted {raw_avi}")
+            except Exception:
+                pass
+
+        return True
+
 
 # ============================================================================
 # Main UI
