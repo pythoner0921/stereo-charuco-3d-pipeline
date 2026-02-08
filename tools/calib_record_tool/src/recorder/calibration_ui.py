@@ -471,20 +471,37 @@ class PostProcessor:
         port1_path = primary_dir / "port_1.avi"
         port2_path = primary_dir / "port_2.avi"
 
+        # Check disk space before processing
+        raw_size = raw_avi.stat().st_size
+        # Each port ≈ 60% of raw (crop halves width, -q:v 5 compresses more)
+        estimated_need = int(raw_size * 1.2)  # both ports combined
+        try:
+            free_space = shutil.disk_usage(primary_dir).free
+            if free_space < estimated_need:
+                free_mb = free_space // (1024 * 1024)
+                need_mb = estimated_need // (1024 * 1024)
+                self._log(
+                    f"[ERROR] Not enough disk space: {free_mb} MB free, "
+                    f"~{need_mb} MB needed. Free up space and try again."
+                )
+                return False
+        except Exception:
+            pass  # skip check if disk_usage fails
+
         self._log("[STEP 1] Splitting AVI into left/right AVI (MJPEG, parallel)...")
 
         cmd_left = [
             ffmpeg, "-hide_banner", "-y",
             "-i", str(raw_avi),
             "-vf", left_crop,
-            "-c:v", "mjpeg", "-q:v", "2",
+            "-c:v", "mjpeg", "-q:v", "5",
             str(port1_path),
         ]
         cmd_right = [
             ffmpeg, "-hide_banner", "-y",
             "-i", str(raw_avi),
             "-vf", right_crop,
-            "-c:v", "mjpeg", "-q:v", "2",
+            "-c:v", "mjpeg", "-q:v", "5",
             str(port2_path),
         ]
 
