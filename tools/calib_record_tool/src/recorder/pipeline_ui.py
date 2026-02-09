@@ -497,8 +497,8 @@ class PipelineUI(tk.Tk):
     # Row 2: cooldown_seconds | hog_hit_threshold
     tk.Label(det_grid, text="Cooldown:", font=("Segoe UI", 9),
              fg=FG_DIM, bg=BG_PANEL).grid(row=1, column=0, sticky="w", pady=(4, 0))
-    self.var_cooldown = tk.IntVar(value=30)
-    tk.Spinbox(det_grid, from_=5, to=120, width=4,
+    self.var_cooldown = tk.IntVar(value=300)
+    tk.Spinbox(det_grid, from_=30, to=600, width=4,
                textvariable=self.var_cooldown,
                font=("Segoe UI", 9),
                command=lambda: self._on_detection_param_change(

@@ -44,8 +44,8 @@ class SmartRecorderConfig:
   hog_scale: float = 1.05            # HOG multi-scale step
 
   # State machine parameters
-  absence_threshold: int = 5         # Consecutive misses before COOLDOWN
-  cooldown_seconds: float = 30.0     # Seconds in COOLDOWN before stopping
+  absence_threshold: int = 5         # Consecutive detection misses before COOLDOWN
+  cooldown_seconds: float = 300.0    # Seconds in COOLDOWN before stopping (5 min)
 
   # Camera parameters (from CalibConfig)
   device_name: str = "3D USB Camera"
@@ -269,8 +269,9 @@ class SmartRecorder:
       self._frame_count += 1
 
       # ── Person detection (every N frames) ──
+      is_detection_frame = (self._frame_count % self.config.detection_interval == 0)
       person_detected = self._last_detection_result
-      if self._frame_count % self.config.detection_interval == 0:
+      if is_detection_frame:
         person_detected = self._detect_person(frame)
         self._last_detection_result = person_detected
 
@@ -280,7 +281,7 @@ class SmartRecorder:
         self._frame_count_recorded += 1
 
       # ── State machine transitions ──
-      self._update_state_machine(person_detected)
+      self._update_state_machine(person_detected, is_detection_frame)
 
       # ── Update preview frame ──
       self._update_preview(frame)
@@ -323,18 +324,26 @@ class SmartRecorder:
       logger.warning(f"Detection error: {e}")
       return False
 
-  def _update_state_machine(self, person_detected: bool):
-    """Handle state transitions based on detection result."""
+  def _update_state_machine(self, person_detected: bool,
+                            is_detection_frame: bool = True):
+    """Handle state transitions based on detection result.
+
+    Only counts misses on actual detection frames so that
+    absence_threshold means "N consecutive detection checks
+    with no person", not "N raw frames".
+    """
     prev_state = self._state
 
     if self._state == "idle":
-      if person_detected:
+      if person_detected and is_detection_frame:
         self._start_recording()
         self._state = "recording"
         self._consecutive_misses = 0
 
     elif self._state == "recording":
-      if person_detected:
+      if not is_detection_frame:
+        pass  # skip — only update on detection frames
+      elif person_detected:
         self._consecutive_misses = 0
       else:
         self._consecutive_misses += 1
@@ -343,7 +352,7 @@ class SmartRecorder:
           self._cooldown_start = time.time()
 
     elif self._state == "cooldown":
-      if person_detected:
+      if person_detected and is_detection_frame:
         # Person returned — resume recording
         self._state = "recording"
         self._consecutive_misses = 0
