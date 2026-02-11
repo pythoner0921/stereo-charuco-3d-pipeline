@@ -853,29 +853,57 @@ def run_auto_reconstruction(
     from caliscope.trackers.tracker_enum import TrackerEnum
     tracker_enum = TrackerEnum[tracker_name]
 
-  _emit(on_progress, "reconstruction", "Starting 2D landmark detection...", 5)
+  # Stage 1: 2D detection — skip if xy CSV already exists (real-time mode)
+  xy_csv_path = recording_path / tracker_enum.name / f"xy_{tracker_enum.name}.csv"
 
-  # Stage 1: 2D detection — use fast batch ONNX path for YOLOV8_POSE
-  if tracker_name == "YOLOV8_POSE":
-    from .fast_detect import fast_create_xy
-    fast_create_xy(
-      recording_path, camera_array,
-      model_size=model_size, imgsz=imgsz,
-      fps_target=fps_target, batch_size=2,
-    )
+  if xy_csv_path.exists():
+    _emit(on_progress, "reconstruction",
+          f"Using existing 2D keypoints: {xy_csv_path.name}", 10)
+    logger.info(f"Skipping 2D detection, using existing CSV: {xy_csv_path}")
   else:
-    reconstructor = Reconstructor(camera_array, recording_path, tracker_enum)
-    completed = reconstructor.create_xy(include_video=False, fps_target=fps_target)
-    if not completed:
-      raise RuntimeError("2D landmark detection was cancelled or failed")
+    _emit(on_progress, "reconstruction", "Starting 2D landmark detection...", 5)
+
+    if tracker_name == "YOLOV8_POSE":
+      from .fast_detect import fast_create_xy
+      fast_create_xy(
+        recording_path, camera_array,
+        model_size=model_size, imgsz=imgsz,
+        fps_target=fps_target, batch_size=1,
+      )
+    else:
+      reconstructor = Reconstructor(camera_array, recording_path, tracker_enum)
+      completed = reconstructor.create_xy(include_video=False, fps_target=fps_target)
+      if not completed:
+        raise RuntimeError("2D landmark detection was cancelled or failed")
 
   _emit(on_progress, "reconstruction", "Starting 3D triangulation...", 80)
 
-  # Stage 2: 3D triangulation — reconstructor reads xy CSV regardless of path
-  reconstructor = Reconstructor(camera_array, recording_path, tracker_enum)
-  reconstructor.create_xyz()
+  # Stage 2: 3D triangulation
+  # Check if video files exist — if not (real-time mode), triangulate directly
+  has_video = any(
+    (recording_path / f"port_{p}.mp4").exists() or
+    (recording_path / f"port_{p}.avi").exists()
+    for p in camera_array.cameras
+  )
 
   output_path = recording_path / tracker_enum.name / f"xyz_{tracker_enum.name}.csv"
+
+  if has_video:
+    # Normal path: Reconstructor reads video metadata for sync
+    reconstructor = Reconstructor(camera_array, recording_path, tracker_enum)
+    reconstructor.create_xyz()
+  else:
+    # Real-time path: no video files, triangulate directly from xy CSV
+    logger.info("No video files found, triangulating directly from xy CSV")
+    xy_data = ImagePoints.from_csv(xy_csv_path)
+    if xy_data.df.empty:
+      raise RuntimeError("No 2D keypoints found in xy CSV")
+    filled_xy = xy_data.fill_gaps(max_gap_size=3)
+    xyz_data = filled_xy.triangulate(camera_array)
+    if xyz_data.df.empty:
+      raise RuntimeError("Triangulation produced no 3D points")
+    xyz_data.df.to_csv(output_path, index=False)
+    logger.info(f"Saved {len(xyz_data.df)} 3D points to {output_path}")
 
   # Stage 3: Filter outlier 3D points (critical for narrow-baseline stereo)
   _emit(on_progress, "reconstruction", "Filtering 3D outliers...", 90)

@@ -27,7 +27,7 @@ def fast_create_xy(
   model_size: str = "n",
   imgsz: int = 480,
   fps_target: int = 10,
-  batch_size: int = 2,
+  batch_size: int = 1,
 ) -> Path:
   """Run batch ONNX 2D detection on stereo recording videos.
 

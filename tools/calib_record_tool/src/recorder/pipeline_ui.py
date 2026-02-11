@@ -7,9 +7,6 @@ Uses the same dark theme and threading patterns as calibration_ui.py.
 from __future__ import annotations
 
 import logging
-import os
-import shutil
-import subprocess
 import sys
 import threading
 import queue
@@ -44,11 +41,9 @@ from .config import load_yaml_config
 from .calibration_ui import (
   CalibConfig,
   CameraPreview,
-  FFmpegRecorder,
-  PostProcessor,
 )
 from .viz_3d import Viz3DData, load_xyz_csv, load_wireframe_for_tracker, render_frame
-from .smart_recorder import SmartRecorder, SmartRecorderConfig
+from .realtime_detector import RealtimeDetector, RealtimeDetectorConfig
 
 logger = logging.getLogger(__name__)
 
@@ -91,17 +86,13 @@ class PipelineUI(tk.Tk):
     self._load_config(config_path, project_dir_override=project_dir)
 
     # State
-    self._state = "idle"  # idle | calibrating | calibrated | recording | processing | reconstructing
+    self._state = "idle"  # idle | calibrating | calibrated | recording | monitoring | reconstructing
     self._camera: Optional[CameraPreview] = None
-    self._recorder: Optional[FFmpegRecorder] = None
-    self._session_dir: Optional[Path] = None
-    self._recording_name: Optional[str] = None
 
-    # Auto-monitoring state
-    self._smart_recorder: Optional[SmartRecorder] = None
-    self._auto_event_queue: queue.Queue = queue.Queue()
-    self._auto_pending_visits: list = []  # visits awaiting post-processing
-    self._auto_timer_id: Optional[str] = None
+    # Real-time detector (used for both manual and auto modes)
+    self._detector: Optional[RealtimeDetector] = None
+    self._detector_timer_id: Optional[str] = None
+    self._detector_event_queue: queue.Queue = queue.Queue()
 
     # Dining zone state
     self._zone_data: Optional[dict] = None  # {x1, y1, x2, y2} normalized
@@ -378,6 +369,11 @@ class PipelineUI(tk.Tk):
       selectcolor=BG, activebackground=BG_PANEL, activeforeground=FG,
     ).pack(side=tk.LEFT, padx=4)
 
+    # ── Shared YOLO detection settings (used by both modes) ──
+    self.var_rt_fps = tk.IntVar(value=20)
+    self.var_rt_model = tk.StringVar(value="n")
+    self.var_rt_imgsz = tk.IntVar(value=480)
+
     # ── Manual recording controls ──
     self._manual_frame = tk.Frame(rec_inner, bg=BG_PANEL)
     self._manual_frame.pack(fill=tk.X, pady=(4, 0))
@@ -393,17 +389,68 @@ class PipelineUI(tk.Tk):
       state=tk.DISABLED,
       command=self._on_record,
     )
-    self.btn_record.pack(side=tk.RIGHT)
+    self.btn_record.pack(side=tk.LEFT)
 
     self.btn_stop = tk.Button(
-      manual_btn_row, text="Stop",
+      manual_btn_row, text="Stop & Save",
       font=("Segoe UI", 10),
       bg="#666", fg=FG,
       relief="flat", padx=10, pady=4,
       state=tk.DISABLED,
       command=self._on_stop,
     )
-    self.btn_stop.pack(side=tk.RIGHT, padx=5)
+    self.btn_stop.pack(side=tk.LEFT, padx=5)
+
+    # Manual status display
+    manual_status_frame = tk.Frame(self._manual_frame, bg=BG_PANEL)
+    manual_status_frame.pack(fill=tk.X, pady=(4, 0))
+
+    self._manual_state_dot = tk.Label(
+      manual_status_frame, text="\u25CF", font=("Segoe UI", 12),
+      fg=FG_DIM, bg=BG_PANEL,
+    )
+    self._manual_state_dot.pack(side=tk.LEFT, padx=(0, 4))
+
+    self._manual_state_label = tk.Label(
+      manual_status_frame, text="Ready",
+      font=("Segoe UI", 10), fg=FG_DIM, bg=BG_PANEL,
+    )
+    self._manual_state_label.pack(side=tk.LEFT)
+
+    self._manual_stats_label = tk.Label(
+      manual_status_frame, text="",
+      font=("Segoe UI", 9), fg=FG_DIM, bg=BG_PANEL,
+    )
+    self._manual_stats_label.pack(side=tk.RIGHT)
+
+    # Manual detection settings
+    manual_det_frame = tk.LabelFrame(
+      self._manual_frame, text=" Detection Settings ",
+      font=("Segoe UI", 9), fg=FG_DIM, bg=BG_PANEL,
+      bd=1, relief="groove",
+    )
+    manual_det_frame.pack(fill=tk.X, pady=(4, 0))
+
+    m_grid = tk.Frame(manual_det_frame, bg=BG_PANEL)
+    m_grid.pack(fill=tk.X, padx=6, pady=4)
+
+    tk.Label(m_grid, text="Target FPS:", font=("Segoe UI", 9),
+             fg=FG_DIM, bg=BG_PANEL).grid(row=0, column=0, sticky="w")
+    tk.Spinbox(m_grid, from_=5, to=30, width=4,
+               textvariable=self.var_rt_fps,
+               font=("Segoe UI", 9)).grid(row=0, column=1, padx=4)
+
+    tk.Label(m_grid, text="Model:", font=("Segoe UI", 9),
+             fg=FG_DIM, bg=BG_PANEL).grid(row=0, column=2, sticky="w", padx=(12, 0))
+    tk.Spinbox(m_grid, values=("n", "s", "m"), width=4,
+               textvariable=self.var_rt_model,
+               font=("Segoe UI", 9)).grid(row=0, column=3, padx=4)
+
+    tk.Label(m_grid, text="Img Size:", font=("Segoe UI", 9),
+             fg=FG_DIM, bg=BG_PANEL).grid(row=0, column=4, sticky="w", padx=(12, 0))
+    tk.Spinbox(m_grid, values=(320, 480, 640), width=5,
+               textvariable=self.var_rt_imgsz,
+               font=("Segoe UI", 9)).grid(row=0, column=5, padx=4)
 
     # ── Auto monitor controls ──
     self._auto_frame = tk.Frame(rec_inner, bg=BG_PANEL)
@@ -474,7 +521,7 @@ class PipelineUI(tk.Tk):
     # Row 1: detection_interval | absence_threshold
     tk.Label(det_grid, text="Detect every:", font=("Segoe UI", 9),
              fg=FG_DIM, bg=BG_PANEL).grid(row=0, column=0, sticky="w")
-    self.var_det_interval = tk.IntVar(value=5)
+    self.var_det_interval = tk.IntVar(value=10)
     tk.Spinbox(det_grid, from_=1, to=30, width=4,
                textvariable=self.var_det_interval,
                font=("Segoe UI", 9),
@@ -486,7 +533,7 @@ class PipelineUI(tk.Tk):
 
     tk.Label(det_grid, text="Miss threshold:", font=("Segoe UI", 9),
              fg=FG_DIM, bg=BG_PANEL).grid(row=0, column=3, sticky="w", padx=(12, 0))
-    self.var_absence = tk.IntVar(value=5)
+    self.var_absence = tk.IntVar(value=15)
     tk.Spinbox(det_grid, from_=1, to=30, width=4,
                textvariable=self.var_absence,
                font=("Segoe UI", 9),
@@ -494,7 +541,7 @@ class PipelineUI(tk.Tk):
                  "absence_threshold", self.var_absence.get()),
                ).grid(row=0, column=4, padx=4)
 
-    # Row 2: cooldown_seconds | hog_hit_threshold
+    # Row 2: cooldown_seconds
     tk.Label(det_grid, text="Cooldown:", font=("Segoe UI", 9),
              fg=FG_DIM, bg=BG_PANEL).grid(row=1, column=0, sticky="w", pady=(4, 0))
     self.var_cooldown = tk.IntVar(value=300)
@@ -507,18 +554,24 @@ class PipelineUI(tk.Tk):
     tk.Label(det_grid, text="sec", font=("Segoe UI", 9),
              fg=FG_DIM, bg=BG_PANEL).grid(row=1, column=2, sticky="w", pady=(4, 0))
 
-    tk.Label(det_grid, text="HOG threshold:", font=("Segoe UI", 9),
-             fg=FG_DIM, bg=BG_PANEL).grid(row=1, column=3, sticky="w", padx=(12, 0), pady=(4, 0))
-    self.var_hog_thresh = tk.DoubleVar(value=0.0)
-    self._hog_scale = tk.Scale(
-      det_grid, from_=-1.0, to=2.0, resolution=0.1,
-      orient=tk.HORIZONTAL, variable=self.var_hog_thresh,
-      bg=BG_PANEL, fg=FG, highlightthickness=0, troughcolor="#555",
-      length=100, showvalue=True,
-      command=lambda v: self._on_detection_param_change(
-        "hog_hit_threshold", float(v)),
-    )
-    self._hog_scale.grid(row=1, column=4, padx=4, pady=(4, 0))
+    # Row 3: YOLO settings (FPS / Model / ImgSize)
+    tk.Label(det_grid, text="Target FPS:", font=("Segoe UI", 9),
+             fg=FG_DIM, bg=BG_PANEL).grid(row=2, column=0, sticky="w", pady=(4, 0))
+    tk.Spinbox(det_grid, from_=5, to=30, width=4,
+               textvariable=self.var_rt_fps,
+               font=("Segoe UI", 9)).grid(row=2, column=1, padx=4, pady=(4, 0))
+
+    tk.Label(det_grid, text="Model:", font=("Segoe UI", 9),
+             fg=FG_DIM, bg=BG_PANEL).grid(row=2, column=2, sticky="w", pady=(4, 0))
+    tk.Spinbox(det_grid, values=("n", "s", "m"), width=4,
+               textvariable=self.var_rt_model,
+               font=("Segoe UI", 9)).grid(row=2, column=3, padx=4, pady=(4, 0))
+
+    tk.Label(det_grid, text="Img Size:", font=("Segoe UI", 9),
+             fg=FG_DIM, bg=BG_PANEL).grid(row=2, column=4, sticky="w", padx=(12, 0), pady=(4, 0))
+    tk.Spinbox(det_grid, values=(320, 480, 640), width=5,
+               textvariable=self.var_rt_imgsz,
+               font=("Segoe UI", 9)).grid(row=2, column=5, padx=4, pady=(4, 0))
 
     # Camera preview canvas
     self.preview_canvas = tk.Canvas(
@@ -711,6 +764,7 @@ class PipelineUI(tk.Tk):
       # Gate recording behind zone check
       if self._zone_data:
         self.btn_record.config(state=tk.NORMAL)
+        self.btn_stop.config(state=tk.DISABLED)
         self.btn_start_monitor.config(state=tk.NORMAL)
         self._zone_status_dot.config(fg=ACCENT)
         self._zone_status_label.config(text="Dining Zone: defined", fg=ACCENT)
@@ -731,11 +785,8 @@ class PipelineUI(tk.Tk):
       self.btn_record.config(state=tk.DISABLED)
       self.btn_stop.config(state=tk.NORMAL)
       self.btn_calibrate.config(state=tk.DISABLED)
-
-    elif self._state == "processing":
-      self.btn_stop.config(state=tk.DISABLED)
-      self.btn_record.config(state=tk.DISABLED)
-      self._rec_timer_label.config(text="Post-processing video...")
+      self.btn_start_monitor.config(state=tk.DISABLED)
+      self.btn_reconstruct.config(state=tk.DISABLED)
 
     elif self._state == "monitoring":
       self.btn_calibrate.config(state=tk.DISABLED)
@@ -824,79 +875,103 @@ class PipelineUI(tk.Tk):
       self._camera = None
 
   def _on_record(self):
-    """Start recording a new session."""
-    # Stop preview first (camera needed by FFmpeg)
+    """Start manual recording (real-time detection, no video)."""
+    # Stop preview first (camera needed by detector)
     if self._camera:
       self._camera.stop()
       self._camera = None
       self.btn_preview.config(text="Preview")
-      time.sleep(0.5)
+      time.sleep(0.3)
 
-    # Create session directory
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    self._recording_name = f"session_{ts}"
+    # Read UI parameters in main thread
+    fps_target = self.var_rt_fps.get()
+    model_size = self.var_rt_model.get()
+    imgsz = self.var_rt_imgsz.get()
 
-    raw_output_dir = self._project_dir / "raw_output"
-    self._session_dir = raw_output_dir / self._recording_name
-    self._session_dir.mkdir(parents=True, exist_ok=True)
+    rt_config = RealtimeDetectorConfig.from_calib_config(
+      self.config,
+      device_index=self.var_cam_index.get(),
+      fps_target=fps_target,
+      model_size=model_size,
+      imgsz=imgsz,
+      auto_mode=False,
+    )
 
-    raw_avi = self._session_dir / "raw.avi"
+    recordings_base = self._project_dir / "recordings"
+    recordings_base.mkdir(parents=True, exist_ok=True)
 
-    # Start FFmpeg recording
-    self._recorder = FFmpegRecorder(self.config, raw_avi)
-    if not self._recorder.start():
-      messagebox.showerror("Error", "Failed to start recording.")
+    def on_event(event):
+      self._detector_event_queue.put(event)
+
+    self._detector = RealtimeDetector(rt_config, recordings_base, on_event=on_event)
+
+    if not self._detector.start():
+      messagebox.showerror("Error", "Failed to start recording.\nCheck camera connection.")
+      self._detector = None
       return
 
     self._state = "recording"
-    self._recording_start_time = time.time()
     self._update_state_display()
-    self._log(f"Recording started: {self._recording_name}")
+    self._log("Recording started (real-time detection, no video)")
+    self._manual_detect_tick()
 
   def _on_stop(self):
-    """Stop recording and start post-processing."""
-    if self._recorder:
-      self._recorder.stop()
-      self._recorder = None
+    """Stop manual recording, save CSV, and auto-reconstruct."""
+    if self._detector_timer_id:
+      self.after_cancel(self._detector_timer_id)
+      self._detector_timer_id = None
 
-    self._state = "processing"
-    self._update_state_display()
-    self._log("Recording stopped. Post-processing...")
+    session_name = None
+    if self._detector:
+      session_name = self._detector._session_name
+      self._detector.stop()
+      self._detector = None
 
-    thread = threading.Thread(target=self._worker_post_process, daemon=True)
-    thread.start()
+    # Reset manual mode status indicators
+    self._manual_state_dot.config(fg=FG_DIM)
+    self._manual_state_label.config(text="Ready", fg=FG_DIM)
+    self._manual_stats_label.config(text="")
+    self._rec_timer_label.config(text="")
+    self._log("Recording stopped, CSV saved")
 
-  def _worker_post_process(self):
-    """Background: split video and copy to recordings directory."""
-    try:
-      raw_avi = self._session_dir / "raw.avi"
-      recordings_dir = self._project_dir / "recordings" / self._recording_name
-      recordings_dir.mkdir(parents=True, exist_ok=True)
+    # Auto-start 3D reconstruction
+    if session_name:
+      self._refresh_recordings()
+      self.var_recording.set(session_name)
+      self._log(f"Auto-reconstructing {session_name}...")
+      self._on_reconstruct()
+    else:
+      self._state = "calibrated"
+      self._update_state_display()
 
-      processor = PostProcessor(
-        self.config, self._session_dir,
-        on_log=lambda msg: self._msg_queue.put(("log", msg)),
-      )
+  def _manual_detect_tick(self):
+    """Periodic UI update during manual recording (50ms)."""
+    if not self._detector or not self._detector.is_running:
+      return
 
-      success = processor.run(raw_avi, [recordings_dir])
+    # Process events
+    while True:
+      try:
+        event = self._detector_event_queue.get_nowait()
+        self._handle_detector_event(event, mode="manual")
+      except queue.Empty:
+        break
 
-      if success:
-        # Generate frame_timestamps.csv for the recording
-        self._generate_recording_timestamps(recordings_dir)
-        self._msg_queue.put(("record_done", self._recording_name))
-      else:
-        self._msg_queue.put(("record_error", "Post-processing failed"))
+    # Update status display
+    dt = self._detector
+    self._manual_state_dot.config(fg=ACCENT_RED)
+    self._manual_state_label.config(text="Detecting...", fg=ACCENT_RED)
+    self._manual_stats_label.config(
+      text=f"Frames: {dt.frame_count}  |  Keypoints: {dt.keypoint_count}",
+      fg=FG,
+    )
 
-    except Exception as e:
-      self._msg_queue.put(("record_error", str(e)))
+    # Update preview from detector
+    frame = dt.get_frame()
+    if frame is not None:
+      self._display_preview_frame(frame, show_detection=True)
 
-  def _generate_recording_timestamps(self, recording_dir: Path):
-    """Generate frame_timestamps.csv for a recording session."""
-    try:
-      from .auto_calibrate import _generate_frame_timestamps
-      _generate_frame_timestamps(recording_dir, [1, 2])
-    except Exception as e:
-      logger.warning(f"Could not generate frame_timestamps.csv: {e}")
+    self._detector_timer_id = self.after(50, self._manual_detect_tick)
 
   # ========================================================================
   # Auto-Monitor Mode
@@ -905,15 +980,15 @@ class PipelineUI(tk.Tk):
   def _on_rec_mode_change(self):
     """Switch between manual and auto recording modes."""
     mode = self.var_rec_mode.get()
+    self._manual_frame.pack_forget()
+    self._auto_frame.pack_forget()
     if mode == "manual":
-      self._auto_frame.pack_forget()
       self._manual_frame.pack(fill=tk.X, pady=(4, 0))
-    else:
-      self._manual_frame.pack_forget()
+    elif mode == "auto":
       self._auto_frame.pack(fill=tk.X, pady=(4, 0))
 
   def _on_start_monitor(self):
-    """Start SmartRecorder auto-monitoring."""
+    """Start auto-monitoring with YOLO person detection + real-time pose."""
     # Stop any existing preview
     if self._camera:
       self._camera.stop()
@@ -921,175 +996,182 @@ class PipelineUI(tk.Tk):
       self.btn_preview.config(text="Preview")
       time.sleep(0.3)
 
-    # Create SmartRecorder config from CalibConfig
-    sr_config = SmartRecorderConfig.from_calib_config(
+    # Read UI parameters in main thread
+    fps_target = self.var_rt_fps.get()
+    model_size = self.var_rt_model.get()
+    imgsz = self.var_rt_imgsz.get()
+    detection_interval = self.var_det_interval.get()
+    absence_threshold = self.var_absence.get()
+    cooldown_seconds = float(self.var_cooldown.get())
+
+    rt_config = RealtimeDetectorConfig.from_calib_config(
       self.config,
       device_index=self.var_cam_index.get(),
+      fps_target=fps_target,
+      model_size=model_size,
+      imgsz=imgsz,
+      auto_mode=True,
+      detection_interval=detection_interval,
+      absence_threshold=absence_threshold,
+      cooldown_seconds=cooldown_seconds,
     )
 
-    # Output base: project raw_output directory
-    output_base = self._project_dir / "raw_output"
-    output_base.mkdir(parents=True, exist_ok=True)
+    recordings_base = self._project_dir / "recordings"
+    recordings_base.mkdir(parents=True, exist_ok=True)
 
-    # Event handler (called from SmartRecorder's background thread)
     def on_event(event):
-      self._auto_event_queue.put(event)
+      self._detector_event_queue.put(event)
 
-    self._smart_recorder = SmartRecorder(sr_config, output_base, on_event=on_event)
+    self._detector = RealtimeDetector(rt_config, recordings_base, on_event=on_event)
 
-    if not self._smart_recorder.start():
+    if not self._detector.start():
       messagebox.showerror("Error", "Failed to start auto-monitoring.\nCheck camera connection.")
-      self._smart_recorder = None
+      self._detector = None
       return
 
     self._state = "monitoring"
-    self._auto_pending_visits = []
     self._update_state_display()
-    self._log("Auto-monitoring started. Waiting for person...")
-
-    # Start periodic auto-monitor UI update
+    self._log("Auto-monitoring started (YOLO person detection + pose, no video)")
     self._auto_monitor_tick()
 
   def _on_stop_monitor(self):
-    """Stop SmartRecorder auto-monitoring."""
-    if self._smart_recorder:
-      self._smart_recorder.stop()
-      self._smart_recorder = None
+    """Stop auto-monitoring and reconstruct any active session."""
+    if self._detector_timer_id:
+      self.after_cancel(self._detector_timer_id)
+      self._detector_timer_id = None
 
-    if self._auto_timer_id:
-      self.after_cancel(self._auto_timer_id)
-      self._auto_timer_id = None
+    session_name = None
+    if self._detector:
+      # If a session was active, save its name for reconstruction
+      if self._detector.auto_state in ("detecting", "cooldown"):
+        session_name = self._detector._session_name
+      self._detector.stop()
+      self._detector = None
 
-    # Process any remaining pending visits
-    self._process_pending_visits()
-
-    self._state = "calibrated"
-    self._update_state_display()
     self._auto_state_dot.config(fg=FG_DIM)
     self._auto_state_label.config(text="Idle", fg=FG_DIM)
     self._auto_timer_label.config(text="")
     self._log("Auto-monitoring stopped.")
 
+    # Auto-reconstruct the last active session
+    if session_name:
+      self._refresh_recordings()
+      self.var_recording.set(session_name)
+      self._log(f"Auto-reconstructing {session_name}...")
+      self._on_reconstruct()
+    else:
+      self._state = "calibrated"
+      self._update_state_display()
+
   def _auto_monitor_tick(self):
     """Periodic UI update during auto-monitoring (50ms interval)."""
-    if not self._smart_recorder or not self._smart_recorder.is_running:
+    if not self._detector or not self._detector.is_running:
       return
 
-    # Process events from SmartRecorder
+    # Process events from detector
     while True:
       try:
-        event = self._auto_event_queue.get_nowait()
-        self._handle_auto_event(event)
+        event = self._detector_event_queue.get_nowait()
+        self._handle_detector_event(event, mode="auto")
       except queue.Empty:
         break
 
     # Update auto-monitor status display
-    sr = self._smart_recorder
-    state = sr.state
+    dt = self._detector
+    state = dt.auto_state
 
     if state == "idle":
       self._auto_state_dot.config(fg=ACCENT)
       self._auto_state_label.config(text="Monitoring (idle)", fg=ACCENT)
       self._auto_timer_label.config(text="")
-    elif state == "recording":
+    elif state == "detecting":
       self._auto_state_dot.config(fg=ACCENT_RED)
-      elapsed = int(sr.recording_elapsed)
-      self._auto_state_label.config(text="RECORDING", fg=ACCENT_RED)
-      self._auto_timer_label.config(text=f"{elapsed}s", fg=ACCENT_RED)
+      elapsed = int(dt.recording_elapsed)
+      self._auto_state_label.config(text="DETECTING", fg=ACCENT_RED)
+      self._auto_timer_label.config(
+        text=f"{elapsed}s  |  Frames: {dt.frame_count}  |  KP: {dt.keypoint_count}",
+        fg=ACCENT_RED,
+      )
     elif state == "cooldown":
-      remaining = int(sr.cooldown_remaining)
+      remaining = int(dt.cooldown_remaining)
       self._auto_state_dot.config(fg=ACCENT_ORANGE)
       self._auto_state_label.config(text="Cooldown", fg=ACCENT_ORANGE)
       self._auto_timer_label.config(text=f"{remaining}s remaining", fg=ACCENT_ORANGE)
 
-    self._auto_visit_label.config(text=f"Visits: {sr.visit_count}")
+    self._auto_visit_label.config(text=f"Sessions: {dt.session_count}")
 
-    # Update preview from SmartRecorder
-    frame = sr.get_frame()
+    # Update preview from detector
+    frame = dt.get_frame()
     if frame is not None:
-      self._display_preview_frame(frame, show_detection=(state != "idle"))
+      self._display_preview_frame(frame, show_detection=(state == "detecting"))
 
     # Schedule next tick
-    self._auto_timer_id = self.after(50, self._auto_monitor_tick)
+    self._detector_timer_id = self.after(50, self._auto_monitor_tick)
 
-  def _handle_auto_event(self, event: dict):
-    """Handle events from SmartRecorder."""
+  # ========================================================================
+  # Detector Event Handling (shared by manual and auto modes)
+  # ========================================================================
+
+  def _handle_detector_event(self, event: dict, mode: str = "manual"):
+    """Handle events from RealtimeDetector."""
     etype = event.get("type", "")
+    prefix = "[AUTO]" if mode == "auto" else "[REC]"
 
-    if etype == "state_change":
+    if etype == "started":
+      self._log(f"{prefix} Detector started")
+
+    elif etype == "stopped":
+      sessions = event.get("total_sessions", 0)
+      self._log(f"{prefix} Detector stopped ({sessions} sessions)")
+
+    elif etype == "session_start":
+      session = event.get("session", "")
+      self._log(f"{prefix} Session started: {session}")
+
+    elif etype == "session_complete":
+      session = event.get("session", "")
+      frames = event.get("total_frames", 0)
+      kp = event.get("total_keypoints", 0)
+      self._log(f"{prefix} Session complete: {session} ({frames} frames, {kp} keypoints)")
+      self._refresh_recordings()
+
+    elif etype == "auto_state_change":
       new_state = event.get("state", "")
-      self._log(f"[AUTO] State: {new_state}")
+      self._log(f"{prefix} State: {new_state}")
 
-    elif etype == "recording_start":
-      visit = event.get("visit", "")
-      self._log(f"[AUTO] Recording started: {visit}")
-
-    elif etype == "recording_stop":
-      visit = event.get("visit", "")
-      session_dir = event.get("session_dir", "")
-      frame_count = event.get("frame_count", 0)
-      self._log(f"[AUTO] Recording stopped: {visit} ({frame_count} frames)")
-      if session_dir:
-        self._auto_pending_visits.append({
-          "visit": visit,
-          "session_dir": session_dir,
-        })
-        # Start post-processing in background
-        self._process_pending_visits()
+    elif etype == "csv_saved":
+      session = event.get("session", "")
+      self._log(f"{prefix} CSV saved: {event.get('path', '')}")
+      self._refresh_recordings()
+      # Auto-reconstruct completed sessions during monitoring
+      if mode == "auto" and session:
+        self._start_auto_reconstruct(session)
 
     elif etype == "error":
       msg = event.get("message", "")
-      self._log(f"[AUTO] Error: {msg}")
+      self._log(f"{prefix} Error: {msg}")
 
-  def _process_pending_visits(self):
-    """Post-process any pending auto-recorded visits."""
-    while self._auto_pending_visits:
-      visit_info = self._auto_pending_visits.pop(0)
-      visit_name = visit_info["visit"]
-      session_dir = Path(visit_info["session_dir"])
+  def _start_auto_reconstruct(self, session_name: str):
+    """Start 3D reconstruction in background without changing UI state.
 
-      self._log(f"[AUTO] Post-processing: {visit_name}")
+    Used by auto-monitor mode when a session completes while monitoring
+    is still active.
+    """
+    tracker_name = self.var_tracker.get()
+    fps_target = int(self.var_recon_fps.get())
+    model_size = self.var_model_size.get().split()[0]
+    imgsz = int(self.var_imgsz.get().split()[0])
 
-      thread = threading.Thread(
-        target=self._worker_auto_post_process,
-        args=(visit_name, session_dir),
-        daemon=True,
-      )
-      thread.start()
+    self._recon_progress["value"] = 0
+    self._log(f"Auto-reconstructing {session_name}...")
+    self.var_recording.set(session_name)
 
-  def _worker_auto_post_process(self, visit_name: str, session_dir: Path):
-    """Background: post-process an auto-recorded visit."""
-    try:
-      raw_avi = session_dir / "raw.avi"
-      if not raw_avi.exists():
-        self._msg_queue.put(("log", f"[AUTO] No raw.avi found for {visit_name}"))
-        return
-
-      recordings_dir = self._project_dir / "recordings" / visit_name
-      recordings_dir.mkdir(parents=True, exist_ok=True)
-
-      processor = PostProcessor(
-        self.config, session_dir,
-        on_log=lambda msg: self._msg_queue.put(("log", msg)),
-      )
-
-      success = processor.run(raw_avi, [recordings_dir])
-
-      if success:
-        # Copy metadata.json if it exists
-        metadata_src = session_dir / "metadata.json"
-        if metadata_src.exists():
-          import shutil
-          shutil.copy2(metadata_src, recordings_dir / "metadata.json")
-
-        # Generate frame timestamps
-        self._generate_recording_timestamps(recordings_dir)
-        self._msg_queue.put(("auto_visit_done", visit_name))
-      else:
-        self._msg_queue.put(("log", f"[AUTO] Post-processing failed: {visit_name}"))
-
-    except Exception as e:
-      self._msg_queue.put(("log", f"[AUTO] Error processing {visit_name}: {e}"))
+    thread = threading.Thread(
+      target=self._worker_reconstruct,
+      args=(session_name, tracker_name, fps_target, model_size, imgsz),
+      daemon=True,
+    )
+    thread.start()
 
   def _display_preview_frame(self, frame: np.ndarray, show_detection: bool = False):
     """Display a preview frame on the preview canvas."""
@@ -1137,7 +1219,7 @@ class PipelineUI(tk.Tk):
   def _on_mark_zone(self):
     """Enter zone-drawing mode. Start preview if needed."""
     # Start camera preview if not running (and not in auto-monitor mode)
-    if not (self._camera and self._camera._running) and not self._smart_recorder:
+    if not (self._camera and self._camera._running) and not self._detector:
       if not CV2_AVAILABLE:
         messagebox.showerror("Error", "OpenCV not available for camera preview.")
         return
@@ -1333,10 +1415,10 @@ class PipelineUI(tk.Tk):
     )
 
   def _on_detection_param_change(self, param_name: str, value):
-    """Update SmartRecorder config parameter in real-time."""
-    if self._smart_recorder:
+    """Update detector config parameter in real-time."""
+    if self._detector:
       try:
-        setattr(self._smart_recorder.config, param_name, value)
+        setattr(self._detector.config, param_name, value)
         logger.debug(f"Detection param updated: {param_name}={value}")
       except Exception as e:
         logger.warning(f"Failed to update detection param: {e}")
@@ -1381,12 +1463,13 @@ class PipelineUI(tk.Tk):
     if rec_dir.exists():
       for d in sorted(rec_dir.iterdir()):
         if d.is_dir():
-          # Check if it has port_N video files (.mp4 or .avi)
+          # Check for xy CSV (real-time detection) or video files (legacy)
+          has_xy_csv = (d / "YOLOV8_POSE" / "xy_YOLOV8_POSE.csv").exists()
           has_videos = (
             (d / "port_1.mp4").exists() or (d / "port_2.mp4").exists()
             or (d / "port_1.avi").exists() or (d / "port_2.avi").exists()
           )
-          if has_videos:
+          if has_xy_csv or has_videos:
             recordings.append(d.name)
 
     self._rec_combo["values"] = recordings
@@ -1406,18 +1489,26 @@ class PipelineUI(tk.Tk):
       messagebox.showerror("Error", "No recording selected.")
       return
 
+    # Read all Tkinter variables in main thread (not safe from worker thread)
+    tracker_name = self.var_tracker.get()
+    fps_target = int(self.var_recon_fps.get())
+    model_size = self.var_model_size.get().split()[0]
+    imgsz = int(self.var_imgsz.get().split()[0])
+
     self._state = "reconstructing"
     self._update_state_display()
     self._recon_progress["value"] = 0
 
     thread = threading.Thread(
       target=self._worker_reconstruct,
-      args=(recording_name,),
+      args=(recording_name, tracker_name, fps_target, model_size, imgsz),
       daemon=True,
     )
     thread.start()
 
-  def _worker_reconstruct(self, recording_name: str):
+  def _worker_reconstruct(self, recording_name: str,
+                           tracker_name: str, fps_target: int,
+                           model_size: str, imgsz: int):
     """Background: run 3D reconstruction."""
     try:
       from .auto_calibrate import run_auto_reconstruction
@@ -1425,16 +1516,11 @@ class PipelineUI(tk.Tk):
       def on_progress(stage, msg, pct):
         self._msg_queue.put(("recon_progress", (stage, msg, pct)))
 
-      # Extract YOLO model size letter from combo text (e.g., "n  (Nano - fastest)" → "n")
-      model_size = self.var_model_size.get().split()[0]
-      # Extract imgsz number from combo text (e.g., "480  (balanced)" → 480)
-      imgsz = int(self.var_imgsz.get().split()[0])
-
       output_path = run_auto_reconstruction(
         self._project_dir,
         recording_name,
-        tracker_name=self.var_tracker.get(),
-        fps_target=int(self.var_recon_fps.get()),
+        tracker_name=tracker_name,
+        fps_target=fps_target,
         model_size=model_size,
         imgsz=imgsz,
         on_progress=on_progress,
@@ -1761,14 +1847,6 @@ class PipelineUI(tk.Tk):
     if self._camera and self._camera._running:
       self._update_preview()
 
-    # Update recording timer
-    if self._state == "recording" and hasattr(self, "_recording_start_time"):
-      elapsed = time.time() - self._recording_start_time
-      self._rec_timer_label.config(
-        text=f"Recording: {int(elapsed)}s",
-        fg=ACCENT_RED,
-      )
-
     self.after(50, self._update_loop)
 
   def _handle_message(self, msg_type: str, msg):
@@ -1801,25 +1879,6 @@ class PipelineUI(tk.Tk):
       self._calib_step_label.config(text=f"Error: {msg}")
       messagebox.showerror("Calibration Failed", str(msg))
 
-    elif msg_type == "record_done":
-      recording_name = msg
-      self._state = "calibrated"
-      self._update_state_display()
-      self._rec_timer_label.config(text="Recording complete!", fg=ACCENT)
-      self._log(f"Recording saved: recordings/{recording_name}/")
-      self._refresh_recordings()
-
-      # Auto-start reconstruction
-      if messagebox.askyesno("Reconstruct?", f"Recording '{recording_name}' saved.\n\nStart 3D reconstruction now?"):
-        self.var_recording.set(recording_name)
-        self._on_reconstruct()
-
-    elif msg_type == "record_error":
-      self._state = "calibrated"
-      self._update_state_display()
-      self._log(f"[ERROR] Recording failed: {msg}")
-      messagebox.showerror("Error", str(msg))
-
     elif msg_type == "recon_progress":
       stage, text, pct = msg
       if pct >= 0:
@@ -1828,8 +1887,11 @@ class PipelineUI(tk.Tk):
       self._log(f"[{stage}] {text}")
 
     elif msg_type == "recon_done":
-      self._state = "calibrated"
-      self._update_state_display()
+      # Only change state if we're in "reconstructing" (manual/stop flow).
+      # During monitoring, state stays "monitoring".
+      if self._state == "reconstructing":
+        self._state = "calibrated"
+        self._update_state_display()
       self._recon_label.config(text="Reconstruction complete!")
       self._log(f"3D output: {msg}")
       # Auto-load result into Panel 4
@@ -1842,16 +1904,11 @@ class PipelineUI(tk.Tk):
         self._on_load_viz()
 
     elif msg_type == "recon_error":
-      self._state = "calibrated"
-      self._update_state_display()
+      if self._state == "reconstructing":
+        self._state = "calibrated"
+        self._update_state_display()
       self._log(f"[ERROR] Reconstruction failed: {msg}")
       self._recon_label.config(text=f"Error: {msg}")
-      messagebox.showerror("Error", str(msg))
-
-    elif msg_type == "auto_visit_done":
-      visit_name = msg
-      self._log(f"[AUTO] Visit processed: recordings/{visit_name}/")
-      self._refresh_recordings()
 
     elif msg_type == "viz_loaded":
       viz_data = msg
@@ -1919,11 +1976,12 @@ class PipelineUI(tk.Tk):
 
   def destroy(self):
     """Cleanup on window close."""
-    if self._smart_recorder:
-      self._smart_recorder.stop()
-      self._smart_recorder = None
+    if self._detector:
+      self._detector.stop()
+      self._detector = None
+    if self._detector_timer_id:
+      self.after_cancel(self._detector_timer_id)
+      self._detector_timer_id = None
     if self._camera:
       self._camera.stop()
-    if self._recorder and self._recorder.is_running:
-      self._recorder.stop()
     super().destroy()
