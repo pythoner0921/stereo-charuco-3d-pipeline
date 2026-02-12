@@ -554,24 +554,43 @@ class PipelineUI(tk.Tk):
     tk.Label(det_grid, text="sec", font=("Segoe UI", 9),
              fg=FG_DIM, bg=BG_PANEL).grid(row=1, column=2, sticky="w", pady=(4, 0))
 
-    # Row 3: YOLO settings (FPS / Model / ImgSize)
+    # Row 3: Night mode (low-light enhancement)
+    self.var_night_mode = tk.BooleanVar(value=True)
+    tk.Checkbutton(det_grid, text="Night mode", variable=self.var_night_mode,
+                   font=("Segoe UI", 9), fg=FG_DIM, bg=BG_PANEL,
+                   selectcolor=BG, activebackground=BG_PANEL,
+                   command=lambda: self._on_detection_param_change(
+                     "low_light_enhance", self.var_night_mode.get()),
+                   ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+    tk.Label(det_grid, text="Min brightness:", font=("Segoe UI", 9),
+             fg=FG_DIM, bg=BG_PANEL).grid(row=2, column=2, columnspan=2, sticky="w", pady=(4, 0))
+    self.var_brightness_min = tk.IntVar(value=15)
+    tk.Spinbox(det_grid, from_=5, to=50, width=4,
+               textvariable=self.var_brightness_min,
+               font=("Segoe UI", 9),
+               command=lambda: self._on_detection_param_change(
+                 "brightness_min", self.var_brightness_min.get()),
+               ).grid(row=2, column=4, padx=4, pady=(4, 0))
+
+    # Row 4: YOLO settings (FPS / Model / ImgSize)
     tk.Label(det_grid, text="Target FPS:", font=("Segoe UI", 9),
-             fg=FG_DIM, bg=BG_PANEL).grid(row=2, column=0, sticky="w", pady=(4, 0))
+             fg=FG_DIM, bg=BG_PANEL).grid(row=3, column=0, sticky="w", pady=(4, 0))
     tk.Spinbox(det_grid, from_=5, to=30, width=4,
                textvariable=self.var_rt_fps,
-               font=("Segoe UI", 9)).grid(row=2, column=1, padx=4, pady=(4, 0))
+               font=("Segoe UI", 9)).grid(row=3, column=1, padx=4, pady=(4, 0))
 
     tk.Label(det_grid, text="Model:", font=("Segoe UI", 9),
-             fg=FG_DIM, bg=BG_PANEL).grid(row=2, column=2, sticky="w", pady=(4, 0))
+             fg=FG_DIM, bg=BG_PANEL).grid(row=3, column=2, sticky="w", pady=(4, 0))
     tk.Spinbox(det_grid, values=("n", "s", "m"), width=4,
                textvariable=self.var_rt_model,
-               font=("Segoe UI", 9)).grid(row=2, column=3, padx=4, pady=(4, 0))
+               font=("Segoe UI", 9)).grid(row=3, column=3, padx=4, pady=(4, 0))
 
     tk.Label(det_grid, text="Img Size:", font=("Segoe UI", 9),
-             fg=FG_DIM, bg=BG_PANEL).grid(row=2, column=4, sticky="w", padx=(12, 0), pady=(4, 0))
+             fg=FG_DIM, bg=BG_PANEL).grid(row=3, column=4, sticky="w", padx=(12, 0), pady=(4, 0))
     tk.Spinbox(det_grid, values=(320, 480, 640), width=5,
                textvariable=self.var_rt_imgsz,
-               font=("Segoe UI", 9)).grid(row=2, column=5, padx=4, pady=(4, 0))
+               font=("Segoe UI", 9)).grid(row=3, column=5, padx=4, pady=(4, 0))
 
     # Camera preview canvas
     self.preview_canvas = tk.Canvas(
@@ -1003,6 +1022,8 @@ class PipelineUI(tk.Tk):
     detection_interval = self.var_det_interval.get()
     absence_threshold = self.var_absence.get()
     cooldown_seconds = float(self.var_cooldown.get())
+    low_light_enhance = self.var_night_mode.get()
+    brightness_min = self.var_brightness_min.get()
 
     rt_config = RealtimeDetectorConfig.from_calib_config(
       self.config,
@@ -1014,6 +1035,8 @@ class PipelineUI(tk.Tk):
       detection_interval=detection_interval,
       absence_threshold=absence_threshold,
       cooldown_seconds=cooldown_seconds,
+      low_light_enhance=low_light_enhance,
+      brightness_min=brightness_min,
     )
 
     recordings_base = self._project_dir / "recordings"

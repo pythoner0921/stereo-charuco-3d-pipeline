@@ -65,6 +65,12 @@ class RealtimeDetectorConfig:
   detection_confidence: float = 0.3  # Min confidence for person detection
   absence_threshold: int = 15      # Consecutive detection misses before cooldown
   cooldown_seconds: float = 300.0  # Seconds in cooldown before stopping session
+  # Low-light / night mode parameters
+  low_light_enhance: bool = True       # Enable brightness gate + CLAHE enhancement
+  brightness_min: int = 15             # Below this → too dark, skip detection entirely
+  brightness_enhance_max: int = 80     # Below this → apply CLAHE before YOLO
+  clahe_clip_limit: float = 3.0        # CLAHE contrast limit
+  gamma: float = 0.6                   # Gamma correction (< 1.0 = brighten)
 
   @classmethod
   def from_calib_config(cls, calib_config, device_index: int = 0,
@@ -144,6 +150,19 @@ class RealtimeDetector:
 
     # Preview frame
     self._preview_queue: queue.Queue = queue.Queue(maxsize=2)
+
+    # Low-light enhancement (pre-built for reuse)
+    if config.low_light_enhance:
+      inv_gamma = 1.0 / config.gamma
+      self._gamma_lut = np.array([
+        ((i / 255.0) ** inv_gamma) * 255 for i in range(256)
+      ], dtype=np.uint8)
+      self._clahe = cv2.createCLAHE(
+        clipLimit=config.clahe_clip_limit, tileGridSize=(8, 8),
+      )
+    else:
+      self._gamma_lut = None
+      self._clahe = None
 
     # Auto-mode state
     self._auto_state = "idle"  # idle | detecting | cooldown
@@ -465,11 +484,28 @@ class RealtimeDetector:
       logger.warning(f"ONNX detection model failed, fallback to PyTorch: {e}")
       self._detection_model = YOLO(f"yolov8{self.config.model_size}-pose.pt")
 
+  def _enhance_low_light(self, img: np.ndarray) -> np.ndarray:
+    """Apply gamma correction + CLAHE to brighten a dark frame.
+
+    Uses pre-built LUT and CLAHE object for speed (~10ms on 1600x1200).
+    """
+    # Gamma correction (global brightness boost)
+    enhanced = cv2.LUT(img, self._gamma_lut)
+    # CLAHE on luminance channel (local contrast)
+    lab = cv2.cvtColor(enhanced, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    l = self._clahe.apply(l)
+    return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+
   def _detect_person(self, frame: np.ndarray) -> bool:
     """Run lightweight YOLO on left-half frame to detect persons.
 
     Much more robust than HOG: works for sitting, walking, bending,
     any angle. Uses a small ONNX model (192px) for speed (~5-15ms).
+
+    Low-light mode: checks frame brightness first to avoid false
+    positives in dark conditions. Applies CLAHE enhancement for
+    dim (but not black) frames.
     """
     if self._detection_model is None:
       self._load_detection_model()
@@ -477,6 +513,18 @@ class RealtimeDetector:
       return False
     try:
       left = frame[:, :self.config.xsplit]
+
+      # Low-light brightness gate
+      if self.config.low_light_enhance:
+        gray = cv2.cvtColor(left, cv2.COLOR_BGR2GRAY)
+        brightness = float(np.mean(gray))
+        if brightness < self.config.brightness_min:
+          # Too dark — skip detection entirely (avoids noise false positives)
+          return False
+        if brightness < self.config.brightness_enhance_max and self._clahe is not None:
+          # Dim but not black — enhance before detection
+          left = self._enhance_low_light(left)
+
       results = self._detection_model(
         left, verbose=False, imgsz=self.config.detection_imgsz,
       )
