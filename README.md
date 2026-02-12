@@ -36,61 +36,48 @@ Stereo camera 3D motion capture pipeline with auto-calibration. Uses a dual-came
 conda create -n stereo-pipeline python=3.11 pip ffmpeg -c conda-forge -y
 conda activate stereo-pipeline
 
-# 2. Install caliscope (must be from GitHub, not PyPI)
-pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e
+# 2. Install caliscope (do NOT use 'pip install caliscope' — PyPI version is outdated)
+pip install git+https://github.com/pythoner0921/caliscope.git@8dc0cd4e
 
 # 3. Install this pipeline
 pip install stereo-charuco-pipeline
 
-# 4. (Optional) Install VideoPose3D support for monocular 3D fusion
-#    This improves accuracy on occluded joints. Skip if you don't need it.
-pip install stereo-charuco-pipeline[videopose3d]
-
-# 5. Fix dependency conflicts (required after every install/upgrade)
-pip install pyside6-essentials==6.8.1 shiboken6==6.8.1   # PySide6 6.10+ has DLL issues
-pip uninstall opencv-python opencv-python-headless -y      # remove ultralytics' opencv
-pip install --force-reinstall --no-deps --no-cache-dir opencv-contrib-python>=4.8.0.74  # restore aruco
-pip install --force-reinstall --no-deps "numpy<2.4"        # numba requires numpy<2.4
-```
-
-> **Important**: Step 5 is required every time you install or upgrade.
-> These fixes resolve three known conflicts:
-> - `ultralytics` installs `opencv-python` which lacks `cv2.aruco`
-> - `PySide6 >= 6.10` causes DLL load failures on some Windows machines
-> - `--no-deps` is critical: without it, reinstalling opencv pulls `numpy >= 2.4` which
->   conflicts with conda-installed numpy (no RECORD file) and breaks the environment
->
-> **Step 4 is optional**: Without torch, the pipeline works normally — it just
-> skips the VideoPose3D fusion step during reconstruction. ONNX acceleration
-> and all other v0.5.0 optimizations work without torch.
-
-### Method 2: Clone from GitHub (for development)
-
-```bash
-# 1. Clone
-git clone https://github.com/pythoner0921/stereo-charuco-3d-pipeline.git
-cd stereo-charuco-3d-pipeline
-
-# 2. Create environment
-conda create -n stereo-pipeline python=3.11 pip ffmpeg -c conda-forge -y
-conda activate stereo-pipeline
-
-# 3. Install caliscope
-pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e
-
-# 4. Install in editable mode
-cd tools/calib_record_tool
-pip install -e .
-
-# 5. (Optional) Install VideoPose3D support
-pip install -e ".[videopose3d]"
-
-# 6. Fix dependency conflicts
+# 4. Fix dependency conflicts (required after every install/upgrade)
 pip install pyside6-essentials==6.8.1 shiboken6==6.8.1
 pip uninstall opencv-python opencv-python-headless -y
 pip install --force-reinstall --no-deps --no-cache-dir opencv-contrib-python>=4.8.0.74
 pip install --force-reinstall --no-deps "numpy<2.4"
 ```
+
+> **Why step 4?** `ultralytics` installs opencv without `cv2.aruco`; PySide6 6.10+ has DLL issues on Windows; `--no-deps` prevents numpy version conflicts with conda.
+>
+> **Optional**: `pip install stereo-charuco-pipeline[videopose3d]` adds monocular 3D fusion (requires torch). The pipeline works fine without it.
+
+### Method 2: Clone from GitHub (for development)
+
+```bash
+# 1. Clone and create environment
+git clone https://github.com/pythoner0921/stereo-charuco-3d-pipeline.git
+cd stereo-charuco-3d-pipeline
+conda create -n stereo-pipeline python=3.11 pip ffmpeg -c conda-forge -y
+conda activate stereo-pipeline
+
+# 2. Install caliscope
+pip install git+https://github.com/pythoner0921/caliscope.git@8dc0cd4e
+
+# 3. Install in editable mode
+cd tools/calib_record_tool
+pip install -e .
+
+# 4. Fix dependency conflicts
+pip install pyside6-essentials==6.8.1 shiboken6==6.8.1
+pip uninstall opencv-python opencv-python-headless -y
+pip install --force-reinstall --no-deps --no-cache-dir opencv-contrib-python>=4.8.0.74
+pip install --force-reinstall --no-deps "numpy<2.4"
+```
+
+> **Offline install**: If GitHub is unavailable, this repo includes a local wheel backup.
+> Replace step 2 with: `pip install vendor/caliscope-0.6.9-py3-none-any.whl`
 
 ### Conda environment.yml (alternative)
 
@@ -284,9 +271,10 @@ conda create -n stereo-pipeline python=3.11 pip ffmpeg -c conda-forge -y
 
 ### `No module named 'caliscope.core'`
 
-caliscope must be installed from GitHub (the PyPI version is outdated):
+caliscope must be installed from our fork (PyPI version is outdated):
 ```bash
-pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e
+pip install git+https://github.com/pythoner0921/caliscope.git@8dc0cd4e
+# Or offline: pip install vendor/caliscope-0.6.9-py3-none-any.whl
 ```
 
 ### `cv2` has no attribute `aruco`

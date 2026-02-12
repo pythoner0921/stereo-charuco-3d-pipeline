@@ -33,9 +33,11 @@ dependencies = [
 repository = "https://github.com/pythoner0921/stereo-charuco-3d-pipeline"
 
 [project.optional-dependencies]
-# caliscope must be installed from GitHub (PyPI version is outdated):
-#   pip install git+https://github.com/mprib/caliscope.git
-# This is listed here for documentation, not auto-installed.
+# caliscope must be installed separately (PyPI version is outdated).
+# Use our fork (pinned to commit 8dc0cd4e = v0.6.9):
+#   pip install git+https://github.com/pythoner0921/caliscope.git@8dc0cd4e
+# Or install from the local wheel backup:
+#   pip install vendor/caliscope-0.6.9-py3-none-any.whl
 videopose3d = ["torch>=2.0.0"]
 
 [project.scripts]

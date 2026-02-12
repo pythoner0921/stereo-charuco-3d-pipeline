@@ -10,9 +10,12 @@ try:
 except ImportError:
     raise ImportError(
         "\n\ncaliscope is not installed (or wrong version).\n"
-        "Install the pinned version:\n\n"
-        "  pip install git+https://github.com/mprib/caliscope.git@8dc0cd4e\n\n"
-        "PyPI caliscope is outdated — you must install from GitHub.\n"
+        "Install the pinned version (pick one):\n\n"
+        "  # Option 1 — from our fork (recommended):\n"
+        "  pip install git+https://github.com/pythoner0921/caliscope.git@8dc0cd4e\n\n"
+        "  # Option 2 — from local wheel backup:\n"
+        "  pip install vendor/caliscope-0.6.9-py3-none-any.whl\n\n"
+        "PyPI caliscope is outdated — do NOT use 'pip install caliscope'.\n"
     )
 
 import cv2
